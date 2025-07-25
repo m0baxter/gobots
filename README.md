@@ -5,8 +5,10 @@ The GoBots to Hugging Face's Transformers
 -[Architectural Components](#architectural-components)
   - [positional encodings](#positional-encodings)
     - [absolute positional encodings](#absolute-positional-encodings)
+    - [Rotary Positional encodings](#rotary-positional-encodings)
     - [T5 relative positional encodings](#t5-relative-positional-encodings)
     - [ALiBi](#alibi)
+    - [NoPE](#nope)
 
 ## Architectural Components
 
@@ -96,3 +98,17 @@ pros:
 
 cons:
 - biases attention toward nearby tokens.
+
+#### NoPE
+
+As most LLMs are implemented as decoder only transformers explicit positional encoding can be completely forgone. The causal mask in the attention
+mechanism appears to be all one needs to include positional information. NoPE, which stands for no positional encoding is precicesly this.
+
+pros:
+- easy to implement
+- adds no overhead
+- generalizes to any sequence length
+
+cons:
+- Test were performed on a simplified toy model
+- may not be better overall in general
