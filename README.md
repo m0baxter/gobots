@@ -145,6 +145,7 @@ $$
 \mathrm{ReLU}(x) = \begin{cases}
 x & x > 0 \\
 0 & x \leq 0
+\end{cases}
 $$
 
 ![ReLU activation function](./images/activations/relu.png)
@@ -157,6 +158,7 @@ $$
 \mathrm{LReLU}_\alpha(x) = \begin{cases}
 x & x > 0 \\
 \alpha * x & x \leq 0
+\end{cases}
 $$
 
 ![Leaky ReLU activation function for α = 0.1](./images/activations/leaky_relu.png)
@@ -169,6 +171,7 @@ $$
 \mathrm{LReLU}_\alpha(x) = \begin{cases}
 x & x > 0 \\
 \alpha \left( e^x - 1 \right) & x \leq 0
+\end{cases}
 $$
 
 ![ELU activation function for α = 0.1](./images/activations/elu.png)
