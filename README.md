@@ -9,6 +9,16 @@ The GoBots to Hugging Face's Transformers
     - [T5 relative positional encodings](#t5-relative-positional-encodings)
     - [ALiBi](#alibi)
     - [NoPE](#nope)
+  - [Activation functions](#activation-functions)
+    - [Sigmoid](#sigmoid)
+    - [ReLU](#relu)
+    - [Leaky ReLU](#leaky-relu)
+    - [ELU](#elu)
+    - [GELU](#gelu)
+    - [SiLU](#silu)
+    - [Swish](#swish)
+    - [GLU](#glu)
+    - [SwiGLU](#swiglu)
 
 ## Architectural Components
 
@@ -38,7 +48,7 @@ pros:
 - relatively fast, it is just one addition.
 
 cons:
-- does not seem to generalize well to unseen input sequence lenghts
+- does not seem to generalize well to unseen input sequence lengths
 - does not encourage attention to any particular positions in the sequence.
 - is not explicitly included in the attention mechanism.
 
@@ -74,7 +84,7 @@ cons:
 #### T5 relative positional encodings
 
 These positional encodings were introduced in the [T5 paper](https://arxiv.org/abs/1910.10683). Here a learned bias is added to the attention scores.
-The parametrs are shared across layers and attention heads. A fixed number of relative distance buckets are used (32 in the original implementation) up to a maximum distance where the buckets scale logarithmically with distance.
+The parameters are shared across layers and attention heads. A fixed number of relative distance buckets are used (32 in the original implementation) up to a maximum distance where the buckets scale logarithmically with distance.
 
 pros:
 - incorporated in the attention mechanism
@@ -102,7 +112,7 @@ cons:
 #### NoPE
 
 As most LLMs are implemented as decoder only transformers explicit positional encoding can be completely forgone. The causal mask in the attention
-mechanism appears to be all one needs to include positional information. NoPE, which stands for no positional encoding is precicesly this.
+mechanism appears to be all one needs to include positional information. NoPE, which stands for no positional encoding is precisely this.
 
 pros:
 - easy to implement
@@ -112,3 +122,99 @@ pros:
 cons:
 - Test were performed on a simplified toy model
 - may not be better overall in general
+
+### Activation functions
+
+Below are a non-exhaustive list of activation functions. Some, like the sigmoid function, which are not necessarily used in LLMs are include to help explain other activations.
+
+#### Sigmoid
+
+The sigmoid activation function is commonly defined as the logistic function
+
+$$
+\sigma(x) = \frac{1}{1 + e^{-x}}
+$$
+
+![sigmoid activation function](./images/activations/sigmoid.png)
+
+#### ReLU
+
+The rectified linear unit is widely popular in many architectures. It can lead to a problem of negative values being set to zero and thus passing forward little to no information.
+
+$$
+\mathrm{ReLU}(x) = \begin{cases}
+x & x > 0 \\
+0 & x \leq 0
+$$
+
+![ReLU activation function](./images/activations/relu.png)
+
+#### Leaky ReLU
+
+The leaky ReLU activation attempts to fix the dying ReLU problem by allowing small negative values
+
+$$
+\mathrm{LReLU}_\alpha(x) = \begin{cases}
+x & x > 0 \\
+\alpha * x & x \leq 0
+$$
+
+![Leaky ReLU activation function for α = 0.1](./images/activations/leaky_relu.png)
+
+#### ELU
+
+Another attempt to solve the issues of ReLU is the exponential linear unit (ELU).
+
+$$
+\mathrm{LReLU}_\alpha(x) = \begin{cases}
+x & x > 0 \\
+\alpha \left( e^x - 1 \right) & x \leq 0
+$$
+
+![ELU activation function for α = 0.1](./images/activations/elu.png)
+
+#### GELU
+
+The Gaussian error linear unit which is approximated as
+
+$$
+\mathrm{GELU}(x) = 0.5 x \left[1 + \tanh\right( \sqrt{2 / \pi} (x + 0.044715 x^3)\left) \right]
+$$
+
+![GELU activation function](./images/activations/gelu.png)
+
+#### SiLU
+
+The sigmoid linear unit
+
+$$
+\mathrm{SiLU}(x) = x \sigma(x)
+$$
+
+![SiLU activation function](./images/activations/silu.png)
+
+#### Swish
+
+The Swish activation is an extension to SiLU that adds a weighting to the sigmoid component
+
+$$
+\mathrm{swish}_{\beta}(x) = x \sigma(\beta x)
+$$
+
+#### GLU
+
+The Gated linear unit is an adaptation of the idea of the gate units from RNNs where the network learns what information to pass on
+
+$$
+\mathrm{GLU}(x) = (x W + b) \otimes \sigma(x V + c)
+$$
+
+parameterized by the weights $W$ and $V$ and the biases $b$ and $c$.
+
+#### SwiGLU
+
+SwiGLU is a combination of the swish and GLU activations where the sigmoid of GLU is replaced with swish
+
+$$
+\mathrm{SwiGLU}(x) = \mathrm{swish}(x W + b) \otimes (x V + c)
+$$
