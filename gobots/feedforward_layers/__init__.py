@@ -1,2 +1,2 @@
 from .glu import GLU as GLU
-from .swiglu import SwiGLU as SwiGLU
+from .swiglu import SwiGLUFeedForward as SwiGLUFeedForward

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchtune.modules import RotaryPositionalEmbeddings
 
 
 class GroupedQueryAttention(nn.Module):
@@ -27,8 +26,8 @@ class GroupedQueryAttention(nn.Module):
         E_total: int,
         nheads: int,
         num_kv_groups: int,
-        apply_rope: bool = False,
-        max_seq_len: int = 4096,
+        qk_norm: bool = False,
+        rms_norm_eps: float = 1.0e-6,
         dropout: float = 0.0,
         bias=True,
         device=None,
@@ -44,12 +43,11 @@ class GroupedQueryAttention(nn.Module):
         assert nheads % num_kv_groups == 0, "nheads must be divisible by num_kv_groups"
         self.E_head = E_total // nheads
         self.bias = bias
-        self.apply_rope = apply_rope
+        self.rope, self.q_norm, self.k_norm = None, None, None
 
-        if apply_rope:
-            self.rope = RotaryPositionalEmbeddings(
-                dim=self.E_head, max_seq_len=max_seq_len
-            ).to(device)
+        if qk_norm:
+            self.q_norm = nn.RMSNorm(self.E_head, eps=rms_norm_eps)
+            self.k_norm = nn.RMSNorm(self.E_head, eps=rms_norm_eps)
 
         self.num_kv_groups = num_kv_groups
         self.group_size = nheads // num_kv_groups
@@ -68,6 +66,7 @@ class GroupedQueryAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_mask=None,
+        pos_embedding=None,
         is_causal=False,
     ) -> torch.Tensor:
         """
@@ -101,9 +100,13 @@ class GroupedQueryAttention(nn.Module):
         # (N, L_s, E_total) -> (N, L_s, nheads, E_head) -> (N, nheads, L_s, E_head)
         value = value.unflatten(-1, [self.num_kv_groups, self.E_head]).transpose(1, 2)
 
-        if self.apply_rope:
-            query = self.rope(query.transpose(1, 2)).transpose(1, 2)
-            key = self.rope(key.transpose(1, 2)).transpose(1, 2)
+        if self.q_norm:
+            query = self.q_norm(query)
+            key = self.q_norm(key)
+
+        if pos_embedding:
+            query = pos_embedding(query.transpose(1, 2)).transpose(1, 2)
+            key = pos_embedding(key.transpose(1, 2)).transpose(1, 2)
 
         # Step 3. Run SDPA
         # (N, nheads, L_t, E_head)
@@ -111,6 +114,7 @@ class GroupedQueryAttention(nn.Module):
             query,
             key,
             value,
+            attn_mask=attn_mask,
             dropout_p=self.dropout,
             is_causal=is_causal,
             enable_gqa=True,
