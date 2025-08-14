@@ -212,6 +212,13 @@ $$
 \mathrm{GLU}(x) = (x W + b) \otimes \sigma(x V + c)
 $$
 
+```mermaid
+flowchart BT
+   input --> linear_layer1[Linear layer] --> sigma[Sigmoid activation] --> merge((⊗))
+   input --> linear_layer2[Linear layer] --> merge
+   merge --> linear_layer_3[Linear layer] --> Output
+```
+
 parameterized by the weights $W$ and $V$ and the biases $b$ and $c$.
 
 #### SwiGLU
@@ -221,3 +228,10 @@ SwiGLU is a combination of the swish and GLU activations where the sigmoid of GL
 $$
 \mathrm{SwiGLU}(x) = \mathrm{swish}(x W + b) \otimes (x V + c)
 $$
+
+```mermaid
+flowchart BT
+   input --> linear_layer1[Linear layer] --> sigma[Swish activation] --> merge((⊗))
+   input --> linear_layer2[Linear layer] --> merge
+   merge --> linear_layer_3[Linear layer] --> Output
+```
