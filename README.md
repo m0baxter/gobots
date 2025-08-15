@@ -2,7 +2,7 @@
 The GoBots to Hugging Face's Transformers
 
 ##### Table of Contents
--[Architectural Components](#architectural-components)
+- [Architectural Components](#architectural-components)
   - [positional encodings](#positional-encodings)
     - [absolute positional encodings](#absolute-positional-encodings)
     - [Rotary Positional encodings](#rotary-positional-encodings)
@@ -18,7 +18,9 @@ The GoBots to Hugging Face's Transformers
     - [SiLU](#silu)
     - [Swish](#swish)
     - [GLU](#glu)
-    - [SwiGLU](#swiglu)
+    - [SwiGLU](#swiglu) 
+- [LLM Architectures](#llm-architectures)
+  - [Llama 3](#llama-3)
 
 ## Architectural Components
 
@@ -234,4 +236,28 @@ flowchart BT
    input --> linear_layer1[Linear layer] --> sigma[Swish activation] --> merge((⊗))
    input --> linear_layer2[Linear layer] --> merge
    merge --> linear_layer_3[Linear layer] --> Output
+```
+
+## LLM Architectures
+
+### Llama 3
+
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer
+   Tokenizer --> embedding[Token embedding layer]
+   subgraph model[Model]
+      embedding --- split1
+      subgraph block[Transformer Blocks]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+         pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+   end
+   output_layer --> output[sequence decoder]
+
+style model fill: lightblue
+style block fill: pink
 ```
