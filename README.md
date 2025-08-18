@@ -18,9 +18,21 @@ The GoBots to Hugging Face's Transformers
     - [SiLU](#silu)
     - [Swish](#swish)
     - [GLU](#glu)
-    - [SwiGLU](#swiglu) 
+    - [SwiGLU](#swiglu)
+  - [Attention Mechanisms](#attention-mechanisms)
+    - [Scaled Dot-Product attention](#scaled-dot-product-attention)
+    - [Multi-Head Attention](#multi-head-attention)
+    - [Multi-Query Attention](#multi-query-attention)
+    - [Grouped-Query Attention](#grouped-query-attention)
+  - [Feedforward Network](#feedforward-network)
+    - [Dense](#dense)
+    - [Mixture of Experts](#mixture-of-experts)
 - [LLM Architectures](#llm-architectures)
-  - [Llama 3](#llama-3)
+  - [Dense architectures](#dense-architectures)
+    - [Llama 3](#llama-3)
+    - [Qwen3 dense](#qwen3-dense)
+    - [SmolLM33](#smollm3)
+  - [Mixture of Experts Architectures](#mixture-of-experts-architectures)
 
 ## Architectural Components
 
@@ -237,16 +249,92 @@ flowchart BT
    input --> linear_layer2[Linear layer] --> merge
    merge --> linear_layer_3[Linear layer] --> Output
 ```
+### Attention Mechanisms
+
+The heart of any transformer model is the attention mechanism. In general an attention block takes three inputs, a query $Q$, a key $K$, and a value $V$.
+In the case of a decoder-only model the query, key, and value are all the same sequence of vectors.
+
+#### Scaled Dot-Product attention
+
+Scaled-dot product attention can be thought of as a mechanism where the query and key attend to each other via the dot product. The attention score is calculated as softmax of the dot-product between
+the query and key. A mask, $M$ is applied to hide certain tokens from eachother. This can be done to remove padding tokens or to make the model causal by only allowing tokens to attend to previous elements of the sequence.
+The attention score is then used to weight the value for the output.
+
+$$
+\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\left( \frac{QK^T}{\sqrt{d^k}} \odot M \right)V
+$$
+
+#### Multi-Head Attention
+
+Multi-head attention (MHA) generalizes standard dot-product attention by combining several attenion calculations at every step.
+
+$$
+\mathrm{Multihead}(Q,K,V) = \mathrm{concat}_{i=1,\dots,h} \left[ \mathrm{Attention}\left(Q W^Q_i, K W^K_i, V W^V_i \right) \right] W^o
+$$
+
+for some weight matrices $W_i^Q \in \mathbb{R}^{d \times d_q}$, $W_i^K \in \mathbb{R}^{d \times d_k}$, $W_i^V \in \mathbb{R}^{d \times d_v}$ and $W^o \in \mathbb{R}^{h \cdot d_v \times d}$.
+
+#### Multi-Query Attention
+
+Multi-Query attention (MQA) is similar to multi-head attention where there are multiple query heads and a single key and value head that are shared byt all query heads. This reduces the complexity of the model at the expense of performance.
+
+```mermaid
+flowchart TB
+   k --- v
+   v --> q1
+   v--> q2
+   v --> q3
+   v --> q4[...]
+   v --> qh
+```
+
+#### Grouped-Query Attention
+
+Grouped-query attention (GQA) can be seen as a trade-off beteen the accuracy of full multi-head attention and the efficiency of mult-query attention. In GQA there are $h_{kv}$ attention heads for the key and value space which are shared by the $h$ query heads
+where $h_{kv} < h$ and $h \mod h_{kv} = 0$. An additional benefit of this method is that, unlike MQA, one can train a model using full MHA attention and perform "up-training" to convert a model to use GQA.
+
+```mermaid
+flowchart TB
+   k1 --- v1
+   v1 --> q1
+   v1--> q2
+   v1--> q3
+   v1 --> q4
+   k2 --- v2
+   v2 --> q5
+   v2--> q6
+   v2--> q7
+   v2 --> q8
+   ki[...] --- vi[...] --> qi[...]
+   vhk["v(kv)"] --- khk["k(kv)"] --> qhm3["q(h-3)"]
+   khk --> qhm2["q(h-2)"]
+   khk --> qhm1["q(h-1)"]
+   khk --> qh["q(h)"]
+```
+### Feedforward Network
+
+The second common component of all transformer architectures is the feedforward layer. The feedforward layer is applied after the attention mechanism as a way to add extra information to the token embeddings and to prepare the output of the attention block
+for the next transformer block layer in the stack.
+
+#### dense
+
+A dense feedforward layer is simply a dense neural network layer that is applied to all outputs of the attention mechanism. The layer is shared across the sequence. In many new LLMs the feedforward layer is a SwiGLU layer.
+
+#### Mixture of Experts
+
+*FILL IN LATER*
 
 ## LLM Architectures
 
-### Llama 3
+### Dense Architectures
+
+#### Llama 3
 
 ```mermaid
 flowchart BT
    text_input[Text input] --> Tokenizer
    Tokenizer --> embedding[Token embedding layer]
-   subgraph model[Model]
+   subgraph model [LLM Model]
       embedding --- split1
       subgraph block[Transformer Blocks]
          split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
@@ -256,8 +344,57 @@ flowchart BT
       end
       merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
    end
-   output_layer --> output[sequence decoder]
+   output_layer --> output[sequence decoder] --> Output
 
 style model fill: lightblue
 style block fill: pink
 ```
+#### Qwen3 dense
+
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer
+   Tokenizer --> embedding[Token embedding layer]
+   subgraph model[LLM Model]
+      embedding --- split1
+      subgraph block[Transformer Blocks]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+         pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
+         attn_norm[Q/K RMSNorm] --> attention
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+   end
+   output_layer --> output[sequence decoder] --> Output
+
+style model fill: lightblue
+style block fill: pink
+```
+
+#### SmolLM3
+
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer
+   Tokenizer --> embedding[Token embedding layer]
+   subgraph model[LLM Model]
+      embedding --- split1
+      subgraph block[Transformer Blocks]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+         no_pos_emb[NoPE] -->  split3@{shape: f-circ}
+         pos_emb[RoPE] --> split3 -- interleave --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+   end
+   output_layer --> output[sequence decoder] --> Output
+
+style model fill: lightblue
+style block fill: pink
+```
+
+### Mixture of Experts Architectures
+
+*FILL IN LATER*
