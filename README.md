@@ -326,73 +326,166 @@ A dense feedforward layer is simply a dense neural network layer that is applied
 
 ## LLM Architectures
 
+Models in this collection share some common parameters:
+
+- `attention_bias`(`bool` *optional* defaults to `False`): whether to include a bias term in the attention blocks.
+- `attention_dropout` (`float` *optional* defaults to `0.0`): dropout rate in the attention blocks.
+- `hidden_dim` (`int`, *optional* default to `2048`): the embedding dimension for tokens.
+- `intermediate_dim` (`int` *optional* defaults to `8192`): dimension of the feedforward layers.
+- `max_position_embeddings` (`int` *optional* defaults to `4096`): maximum number of positional embeddings supported.
+-  `mlp_bias` (`bool` *optional* defaults to `False`): whether to include bias in the feedforward networks.
+- `num_attention_heads` (`int` *optional* defaults to `32`): number of attention heads per query.
+- `num_hidden_layers` (`int` *optional* ddefaults to `16`): number of attention blocks.
+- `num_key_value_heads` (`int` *optional* defaults to `8`): number of key/value heads in the attention mechanism if num_key_value_heads < num_attention_heads uses grouped query attention. If ``num_key_value_heads = 1` this becomes MQA, for `num_key_value_heads = num_attention_heads` it is full MHA, and for any other value `0 < num_key_value_heads < num_attention_heads` it leads to GQA.
+- `rope_base` (`float` *optional* defaults to `500000.0`): the base for the RoPE embedding.
+- `rms_norm_eps` (`float` *optional* defaults to `1E-05`): regularizer for rms norm layers 
+- `vocab_size` (`int`, *optional*, defaults to 32000): vocabulary size for the model.
+
 ### Dense Architectures
 
 #### Llama 3
 
+LLama 3 has a fairly straightforward architecture. Its stand out features are the use of GQA, SwiGLU feedforward layers, and RoPE encodings.
+
 ```mermaid
 flowchart BT
-   text_input[Text input] --> Tokenizer
-   Tokenizer --> embedding[Token embedding layer]
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
    subgraph model [LLM Model]
       embedding --- split1
-      subgraph block[Transformer Blocks]
-         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["GQA (num_attention_heads, num_key_value_heads)"]
          pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
-         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim)"] --> merge2@{shape: circle, label: " + "}
          split2 --> merge2
       end
-      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
    end
    output_layer --> output[sequence decoder] --> Output
 
 style model fill: lightblue
 style block fill: pink
 ```
+As an example a model with the architecture of Llama 3.2 1B can be created with the following configuration
+
+```python
+from gobots.models.llama3_clone import Llama3Config, Llama3Model
+
+
+config = Llama3Config(
+    vocab_size=128256,
+    hidden_dim=2048,
+    intermediate_dim=8192,
+    num_attention_heads=32,
+    num_hidden_layers=16,
+    num_key_value_heads=8,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    rms_norm_eps=1e-05,
+    max_position_embeddings=131072,
+    rope_base=500000.0,
+)
+model = Llama3Model(config)
+```
+
 #### Qwen3 dense
+
+Qwen3 has a similar architecture to LLama 3 with GQA, SwiGLU feedforard layers, and RoPE encodings. The primary distinguishing feature is the inclusion
+of RMS norm layers applied to the query and key after the attention head projections but before the dot product.
 
 ```mermaid
 flowchart BT
-   text_input[Text input] --> Tokenizer
-   Tokenizer --> embedding[Token embedding layer]
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
    subgraph model[LLM Model]
       embedding --- split1
-      subgraph block[Transformer Blocks]
-         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["GQA (num_attention_heads, num_key_value_heads)"]
          pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
          attn_norm[Q/K RMSNorm] --> attention
-         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim)"] --> merge2@{shape: circle, label: " + "}
          split2 --> merge2
       end
-      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
    end
    output_layer --> output[sequence decoder] --> Output
 
 style model fill: lightblue
 style block fill: pink
+```
+As an example a model with the architecture of Qwen3 4B can be created with the following configuration
+
+```python
+from gobots.models.qwen3_dense_clone import Qwen3DenseConfig, Qwen3DenseModel
+
+
+config = Qwen3DenseConfig(
+    vocab_size=151936,
+    hidden_dim=2560,
+    intermediate_dim=9728,
+    num_attention_heads=32,
+    num_hidden_layers=36,
+    num_key_value_heads=8,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    rms_norm_eps=1e-06,
+    max_position_embeddings=40960,
+    rope_base=1000000,
+)
+model = Qwen3DenseModel(config)
 ```
 
 #### SmolLM3
 
+Similar to Llama 3 this model uses GQA and SwiGLU feedforward layers. The primary distinguishing feature is that it uses a mixture of RoPE and NoPE positional
+encodings. Most layers use RoPE however, every `no_rope_layer_interval` layers the RoPE encoding is replaced with NoPE. The thought behind this choice is to
+capture both the positional information of RoPE with the long context length of NoPE.
+
 ```mermaid
 flowchart BT
-   text_input[Text input] --> Tokenizer
-   Tokenizer --> embedding[Token embedding layer]
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
    subgraph model[LLM Model]
       embedding --- split1
-      subgraph block[Transformer Blocks]
-         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention[GQA]
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["GQA (num_attention_heads, num_key_value_heads)"]
          no_pos_emb[NoPE] -->  split3@{shape: f-circ}
-         pos_emb[RoPE] --> split3 -- interleave --> attention --> merge1@{shape: circle, label: " + "}
-         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn[SwiGLU] --> merge2@{shape: circle, label: " + "}
+         pos_emb[RoPE] --> split3 -- "no_rope_layer_interval" --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim)"] --> merge2@{shape: circle, label: " + "}
          split2 --> merge2
       end
-      merge2 --> norm_final[Final RMSNorm] --> output_layer[Linear output layer]
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
    end
    output_layer --> output[sequence decoder] --> Output
 
 style model fill: lightblue
 style block fill: pink
+```
+
+As an example a model with the architecture of SmolLM3 3B can be created with the following configuration
+
+```python
+from gobots.models.smollm3_clone import SmolLM3Config, SmolLM3Model
+
+
+config = SmolLM3Config(
+    vocab_size=128256,
+    hidden_dim=2048,
+    intermediate_dim=11008,
+    num_attention_heads=16,
+    num_hidden_layers=36,
+    num_key_value_heads=4,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    rms_norm_eps=1e-06,
+    no_rope_layer_interval=4,
+    max_position_embeddings=65536,
+    rope_base=5000000.0,
+)
+model = SmolLM3Model(config)
 ```
 
 ### Mixture of Experts Architectures
