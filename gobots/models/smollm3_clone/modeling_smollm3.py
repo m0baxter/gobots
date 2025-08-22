@@ -1,8 +1,8 @@
 import torch.nn as nn
 from transformers import PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
-from ...attention_mechanisms import GroupedQueryAttention
-from ...feedforward_layers import SwiGLUFeedForward
+from ..attention_mechanisms import GroupedQueryAttention
+from ..feedforward_layers import SwiGLUFeedForward
 from .configuration_smollm3 import SmolLM3Config
 
 

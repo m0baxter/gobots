@@ -1,8 +1,8 @@
 import torch.nn as nn
 from transformers import PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
-from ...attention_mechanisms import GroupedQueryAttention
-from ...feedforward_layers import SwiGLUFeedForward
+from ..attention_mechanisms import GroupedQueryAttention
+from ..feedforward_layers import SwiGLUFeedForward
 from .configuration_llama3 import Llama3Config
 
 
