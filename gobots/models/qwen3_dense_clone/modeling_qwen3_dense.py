@@ -29,7 +29,7 @@ class QwenBlock(nn.Module):
             bias=config.mlp_bias,
         )
 
-    def forward(self, x, mask, pos_embedding):
+    def forward(self, x, mask=None, pos_embedding=None):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
@@ -38,7 +38,7 @@ class QwenBlock(nn.Module):
             value=x,
             attn_mask=mask,
             pos_embedding=pos_embedding,
-            is_causal=True,
+            is_causal=mask is None,
         )
 
         x = skip + attention_score
@@ -72,7 +72,7 @@ class Qwen3DenseModel(PreTrainedModel):
         self.final_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.output_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask=None):
         x = self.embedding_layer(x)
 
         for block in self.transformer_blocks:
