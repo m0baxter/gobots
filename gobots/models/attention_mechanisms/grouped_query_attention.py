@@ -43,7 +43,7 @@ class GroupedQueryAttention(nn.Module):
         assert nheads % num_kv_groups == 0, "nheads must be divisible by num_kv_groups"
         self.E_head = E_total // nheads
         self.bias = bias
-        self.rope, self.q_norm, self.k_norm = None, None, None
+        self.q_norm, self.k_norm = None, None
 
         if qk_norm:
             self.q_norm = nn.RMSNorm(self.E_head, eps=rms_norm_eps)
