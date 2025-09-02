@@ -3,11 +3,12 @@ from transformers import PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
-from .configuration_qwen3_dense import Qwen3DenseConfig
+from ..mixture_of_experts import MixtureOfExperts
+from .configuration_llama4 import Llama4Config
 
 
-class QwenBlock(nn.Module):
-    def __init__(self, config: Qwen3DenseConfig):
+class Llama4Block(nn.Module):
+    def __init__(self, config: Llama4Config, index: int):
         super().__init__()
         self.input_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.attention = GroupedQueryAttention(
@@ -17,17 +18,28 @@ class QwenBlock(nn.Module):
             E_total=config.hidden_dim,
             num_heads=config.num_attention_heads,
             num_kv_groups=config.num_key_value_heads,
-            qk_norm=True,
+            qk_norm=config.use_qk_norm,
             rms_norm_eps=config.rms_norm_eps,
             dropout=config.attention_dropout,
             attention_bias=config.attention_bias,
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.feedforward = SwiGLUFeedForward(
-            input_dim=config.hidden_dim,
-            intermediary_dim=config.intermediate_dim,
-            bias=config.mlp_bias,
-        )
+
+        if index % config.interleave_moe_layer_step == 0:
+            self.feedforward = SwiGLUFeedForward(
+                input_dim=config.hidden_dim,
+                intermediary_dim=config.intermediate_size_mlp,
+                bias=config.mlp_bias,
+            )
+
+        else:
+            self.feedforward = MixtureOfExperts(
+                n_shared_experts=1,
+                n_routed_experts=config.num_local_experts,
+                hidden_size=config.hidden_dim,
+                intermediate_size=config.intermediate_size,
+                num_experts_per_token=config.num_experts_per_tok,
+            )
 
     def forward(self, x, mask=None, pos_embedding=None):
         skip = x
@@ -52,17 +64,16 @@ class QwenBlock(nn.Module):
         return x
 
 
-class Qwen3DenseModel(PreTrainedModel):
-    def __init__(self, config: Qwen3DenseConfig):
+class Llama4Model(PreTrainedModel):
+    def __init__(self, config: Llama4Config):
         super().__init__(config)
         self.config = config
 
         self.embedding_layer = nn.Embedding(config.vocab_size, config.hidden_dim)
 
         self.transformer_blocks = nn.ModuleList(
-            [QwenBlock(config) for _ in range(config.num_hidden_layers)]
+            [Llama4Block(config, index) for index in range(config.num_hidden_layers)]
         )
-
         self.rope = RotaryPositionalEmbeddings(
             dim=config.hidden_dim // config.num_attention_heads,
             max_seq_len=config.max_position_embeddings,

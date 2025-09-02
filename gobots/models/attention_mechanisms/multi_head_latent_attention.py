@@ -16,6 +16,7 @@ class MultiHeadLatentAttention(nn.Module):
         qk_nope_head_dim: int,
         dropout: float = 0.0,
         attention_bias: bool = False,
+        **kwargs,
     ):
         super().__init__()
 

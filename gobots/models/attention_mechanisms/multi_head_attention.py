@@ -12,10 +12,10 @@ class MultiHeadAttention(nn.Module):
         E_k (int): Size of embedding dim for key
         E_v (int): Size of embedding dim for value
         E_total (int): Total embedding dim of combined heads post input projection. Each head
-            has dim E_total // nheads
-        nheads (int): Number of heads
+            has dim E_total // num_heads
+        num_heads (int): Number of heads
         dropout (float, optional): Dropout probability. Default: 0.0
-        bias (bool, optional): Whether to add bias to input projection. Default: True
+        attention_bias (bool, optional): Whether to add bias to input projection. Default: True
     """
 
     def __init__(
@@ -24,30 +24,32 @@ class MultiHeadAttention(nn.Module):
         E_k: int,
         E_v: int,
         E_total: int,
-        nheads: int,
+        num_heads: int,
         dropout: float = 0.0,
-        bias=True,
+        attention_bias=True,
         device=None,
         dtype=None,
+        **kwargs,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        self.nheads = nheads
+        self.num_heads = num_heads
         self.dropout = dropout
         self._qkv_same_embed_dim = E_q == E_k and E_q == E_v
 
         if self._qkv_same_embed_dim:
-            self.packed_proj = nn.Linear(E_q, E_total * 3, bias=bias, **factory_kwargs)
+            self.packed_proj = nn.Linear(
+                E_q, E_total * 3, bias=attention_bias, **factory_kwargs
+            )
         else:
-            self.q_proj = nn.Linear(E_q, E_total, bias=bias, **factory_kwargs)
-            self.k_proj = nn.Linear(E_k, E_total, bias=bias, **factory_kwargs)
-            self.v_proj = nn.Linear(E_v, E_total, bias=bias, **factory_kwargs)
+            self.q_proj = nn.Linear(E_q, E_total, bias=attention_bias, **factory_kwargs)
+            self.k_proj = nn.Linear(E_k, E_total, bias=attention_bias, **factory_kwargs)
+            self.v_proj = nn.Linear(E_v, E_total, bias=attention_bias, **factory_kwargs)
 
         E_out = E_q
-        self.out_proj = nn.Linear(E_total, E_out, bias=bias, **factory_kwargs)
-        assert E_total % nheads == 0, "Embedding dim is not divisible by nheads"
-        self.E_head = E_total // nheads
-        self.bias = bias
+        self.out_proj = nn.Linear(E_total, E_out, bias=attention_bias, **factory_kwargs)
+        assert E_total % num_heads == 0, "Embedding dim is not divisible by num_heads"
+        self.E_head = E_total // num_heads
 
     def forward(
         self,
@@ -102,19 +104,19 @@ class MultiHeadAttention(nn.Module):
 
         # Step 2. Split heads and prepare for SDPA
         # reshape query, key, value to separate by head
-        # (N, L_t, E_total) -> (N, L_t, nheads, E_head) -> (N, nheads, L_t, E_head)
-        query = query.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
-        # (N, L_s, E_total) -> (N, L_s, nheads, E_head) -> (N, nheads, L_s, E_head)
-        key = key.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
-        # (N, L_s, E_total) -> (N, L_s, nheads, E_head) -> (N, nheads, L_s, E_head)
-        value = value.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
+        # (N, L_t, E_total) -> (N, L_t, num_heads, E_head) -> (N, num_heads, L_t, E_head)
+        query = query.unflatten(-1, [self.num_heads, self.E_head]).transpose(1, 2)
+        # (N, L_s, E_total) -> (N, L_s, num_heads, E_head) -> (N, num_heads, L_s, E_head)
+        key = key.unflatten(-1, [self.num_heads, self.E_head]).transpose(1, 2)
+        # (N, L_s, E_total) -> (N, L_s, num_heads, E_head) -> (N, num_heads, L_s, E_head)
+        value = value.unflatten(-1, [self.num_heads, self.E_head]).transpose(1, 2)
 
         # Step 3. Run SDPA
-        # (N, nheads, L_t, E_head)
+        # (N, num_heads, L_t, E_head)
         attn_output = F.scaled_dot_product_attention(
             query, key, value, dropout_p=self.dropout, is_causal=is_causal
         )
-        # (N, nheads, L_t, E_head) -> (N, L_t, nheads, E_head) -> (N, L_t, E_total)
+        # (N, num_heads, L_t, E_head) -> (N, L_t, num_heads, E_head) -> (N, L_t, E_total)
         attn_output = attn_output.transpose(1, 2).flatten(-2)
 
         # Step 4. Apply output projection

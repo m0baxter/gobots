@@ -12,6 +12,7 @@ class MixtureOfExperts(nn.Module):
         hidden_size: int = 512,
         intermediate_size: int = 2048,
         num_experts_per_token: int = 8,
+        **kwargs,
     ):
         super().__init__()
         self.n_shared_experts = n_shared_experts

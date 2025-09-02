@@ -1,0 +1,2 @@
+from .configuration_deepseek_v3 import DeepSeekV3Config as DeepSeekV3Config
+from .modeling_deepseek_v3 import DeepSeekV3Model as DeepSeekV3Model

@@ -15,12 +15,12 @@ class SmolLMBlock(nn.Module):
             E_k=config.hidden_dim,
             E_v=config.hidden_dim,
             E_total=config.hidden_dim,
-            nheads=config.num_attention_heads,
+            num_heads=config.num_attention_heads,
             num_kv_groups=config.num_key_value_heads,
             qk_norm=False,
             rms_norm_eps=config.rms_norm_eps,
             dropout=config.attention_dropout,
-            bias=config.attention_bias,
+            attention_bias=config.attention_bias,
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.feedforward = SwiGLUFeedForward(
@@ -71,7 +71,7 @@ class SmolLM3Model(PreTrainedModel):
         )
 
         self.final_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.output_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
 
     def forward(self, x, mask=None):
         x = self.embedding_layer(x)
@@ -81,6 +81,6 @@ class SmolLM3Model(PreTrainedModel):
             x = block(x, mask, pos_embed)
 
         x = self.final_norm(x)
-        logits = self.output_head(x)
+        logits = self.lm_head(x)
 
         return logits
