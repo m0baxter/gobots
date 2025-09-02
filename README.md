@@ -33,6 +33,7 @@ The GoBots to Hugging Face's Transformers
     - [Qwen3 dense](#qwen3-dense)
     - [SmolLM33](#smollm3)
   - [Mixture of Experts Architectures](#mixture-of-experts-architectures)
+    - [Llama 4](#llama-4) 
 
 ## Architectural Components
 
@@ -322,7 +323,44 @@ A dense feedforward layer is simply a dense neural network layer that is applied
 
 #### Mixture of Experts
 
-*FILL IN LATER*
+A mixture of experts (MoE) layer consists of two sets of parallel dense feedforward layers, known as experts. One set, the shared experts, are applied to all tokens containing $N_s$ experts. For the other set, the routed experts, $k$ experts are choosen per token from the $N_r$ available experts. A routing model is used to
+create a gate which decides which experts will be activated for a given token.
+
+Several versions of MoE have been proposed, below we follow the one used in [DeepSeek V3](https://arxiv.org/abs/2412.19437) when calculating the gating function
+
+$$
+\mathrm{MoE}(u_t) = u_t + \sum\limits_{i=1}^{N_s} \mathrm{FFN}_i^{(s)}(u_t) + \sum\limits_{i=1}^{N_r} g_{i, t}\mathrm{FFN}_i^{(r)}(u_t)
+$$
+
+$$
+g_{i,t} = \frac{g^{\prime}_{i,t}}{\sum\limits_{j=1}^{N_r} g^{\prime}_{j,t}}
+$$
+
+$$
+g^{\prime}_{i,t} = \begin{cases}
+s_{i,t} & s_{i,t} \in \mathrm{TopK}(\{s_{i,t} \mid 1 \leq j \leq N_r \}) \\
+0 & \mathrm{else}
+\end{cases}
+$$
+
+$$
+s_{i,t} = \sigma(u^T_t e_i)
+$$
+
+where $e_i$ are the weights of the routing model.
+
+```mermaid
+flowchart BT
+   input --> router["Router top-k"] --> routed1["RE 1"] --> merge@{shape: circle, label: " + "} --> output
+   router --> routed[...] --> merge
+   router --> routedn["RE n"] --> merge
+   input --> shared1["SE 1"] --> merge
+   input --> sharedd[...] --> merge
+   input --> shared2["SE m"] --> merge
+   input -- "skip" --> merge
+```
+
+*ADD load balancing discussion*
 
 ## LLM Architectures
 
@@ -490,4 +528,55 @@ model = SmolLM3Model(config)
 
 ### Mixture of Experts Architectures
 
-*FILL IN LATER*
+#### Llama 4
+
+Llama 4 uses GQA and SwiGLU Feedforward layers. Every other layer uses an MoE layer as opposed to a dense layer. Each MoE has a single shared expert and uses one routed expert per token.
+
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
+   subgraph model[LLM Model]
+      embedding --- split1
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["GQA (num_attention_heads, num_key_value_heads)"]
+         pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim) / MoE (num_experts_per_tok, num_local_experts)"] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
+   end
+   output_layer --> output[sequence decoder] --> Output
+
+style model fill: lightblue
+style block fill: pink
+```
+
+As an example a model with the architecture of Llama 4 17B with 16 experts per MoE layer:
+
+```python
+from gobots.models.llama4_clone import Llama4Config, Llama4Model
+
+
+config = Llama4Config(
+    vocab_size=202048,
+    hidden_dim=5120,
+    interleave_moe_layer_step=1,
+    intermediate_dim=8192,
+    intermediate_size_mlp=16384,
+    num_experts_per_tok=1,
+    num_local_experts=16,
+    num_attention_heads=40,
+    num_hidden_layers=48,
+    num_key_value_heads=8,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    use_qk_norm=True,
+    rms_norm_eps=1e-05,
+    max_position_embeddings=262144,
+    rope_base=500000.0,
+    )
+model = Llama4Model(config)
+```
+
