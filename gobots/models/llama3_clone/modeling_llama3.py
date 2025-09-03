@@ -53,23 +53,26 @@ class LlamaBlock(nn.Module):
 
 
 class Llama3Model(PreTrainedModel):
+    _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+
     def _init_weights(self, module):
         std = self.config.initializer_range
 
         if isinstance(module, nn.Linear):
+
             module.weight.data.normal_(mean=0.0, std=std)
 
             if module.bias is not None:
                 module.bias.data.zero_()
 
-            elif isinstance(module, nn.Embedding):
-                module.weight.data.normal_(mean=0.0, std=std)
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
 
-                if module.padding_idx is not None:
-                    module.weight.data[module.padding_idx].zero_()
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
 
-            elif isinstance(module, nn.RMSNorm):
-                module.weight.data.fill_(1.0)
+        elif isinstance(module, nn.RMSNorm):
+            module.weight.data.fill_(1.0)
 
     def __init__(self, config: Llama3Config):
         super().__init__(config)
@@ -92,6 +95,9 @@ class Llama3Model(PreTrainedModel):
 
         self.final_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
+
+        if config.tie_word_embeddings:
+            self._tie_or_clone_weights(self.embedding_layer, self.lm_head)
 
         self.post_init()
 
