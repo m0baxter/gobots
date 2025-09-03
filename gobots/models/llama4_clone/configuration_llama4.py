@@ -1,15 +1,19 @@
 from transformers import PretrainedConfig
 
 
-class Llama3Config(PretrainedConfig):
+class Llama4Config(PretrainedConfig):
     """
     Args:
-       vocab_size (`int`, *optional*, defaults to 32000):
+        vocab_size (`int`, *optional*, defaults to 32000):
           Vocabulary size for the model.
+        pad_token_id (`int | None` defaults to None):
+          id of the padding token.
         hidden_dim: (`int`, *optional* default to 2048)
           The embedding dimension for tokens.
-       intermediate_dim: (`int` *optional* defaults to 8192)
-          dimension of the feedforward layers
+       intermediate_dim (`int` *optional* defaults to 8192):
+          dimension of the feedforward MOE layers
+       intermediate_size_ml (`int` *optional* defaults to 16384):
+          dimension of the dense feedforward layers.
        attention_bias (`bool` *optional* defaults to False):
           whether to include a bias term in the attention blocks.
        attention_dropout (`float` *optional* defaults to 0.0):
@@ -28,10 +32,16 @@ class Llama3Config(PretrainedConfig):
           the base for the RoPE embedding.
        rms_norm_eps (`float` *optional* defaults to 1E-05):
           regularizer for rms norm layers
-       pad_token_id (`int | None` *optional* defaults to None):
-          id of the padding token.
+       interleave_moe_layer_step (`int` *optional* defaults to 1):
+          rate at which dense and MOE layers alternate.
+       use_qk_norm (`bool` *optional* defaults to True):
+          whether to apply query/key normalizzation in the attention block.
+       num_experts_per_tok (`int` *optional* defaults to 1):
+          number of experts choosen per token.
+       num_local_experts (`int` *optional` defaults to 16):
+          total number of experts per MOE layer.
        tie_word_embeddings (`bool` *optional* defaults to False):
-          whether to tie the embedding and lm_head weights.
+          whether to tie the weights of the embedding layer and the lm_head.
        initializer_range (`float` *optional* defaults to 0.02):
           value to use when initializing model weights.
     """
@@ -41,13 +51,18 @@ class Llama3Config(PretrainedConfig):
         vocab_size: int = 32000,
         pad_token_id: int | None = None,
         hidden_dim: int = 2048,
+        interleave_moe_layer_step: int = 1,
         intermediate_dim: int = 8192,
+        intermediate_size_mlp: int = 16384,
+        num_experts_per_tok: int = 1,
+        num_local_experts: int = 16,
         num_attention_heads: int = 32,
         num_hidden_layers: int = 16,
         num_key_value_heads: int = 8,
         attention_bias: bool = False,
         attention_dropout: float = 0.0,
         mlp_bias: bool = False,
+        use_qk_norm: bool = True,
         rms_norm_eps: float = 1e-05,
         max_position_embeddings: int = 4096,
         rope_base: float = 500000.0,
@@ -61,6 +76,7 @@ class Llama3Config(PretrainedConfig):
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.intermediate_dim = intermediate_dim
+        self.intermediate_size_mlp = intermediate_size_mlp
         self.num_attention_heads = num_attention_heads
         self.num_hidden_layers = num_hidden_layers
         self.num_key_value_heads = num_key_value_heads
@@ -70,4 +86,6 @@ class Llama3Config(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.max_position_embeddings = max_position_embeddings
         self.rope_base = rope_base
+        self.interleave_moe_layer_step = interleave_moe_layer_step
+        self.use_qk_norm = use_qk_norm
         self.initializer_range = initializer_range

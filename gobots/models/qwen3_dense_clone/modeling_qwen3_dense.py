@@ -1,8 +1,8 @@
 import torch.nn as nn
 from transformers import PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
-from ...attention_mechanisms import GroupedQueryAttention
-from ...feedforward_layers import SwiGLUFeedForward
+from ..attention_mechanisms import GroupedQueryAttention
+from ..feedforward_layers import SwiGLUFeedForward
 from .configuration_qwen3_dense import Qwen3DenseConfig
 
 
@@ -15,12 +15,12 @@ class QwenBlock(nn.Module):
             E_k=config.hidden_dim,
             E_v=config.hidden_dim,
             E_total=config.hidden_dim,
-            nheads=config.num_attention_heads,
+            num_heads=config.num_attention_heads,
             num_kv_groups=config.num_key_value_heads,
             qk_norm=True,
             rms_norm_eps=config.rms_norm_eps,
             dropout=config.attention_dropout,
-            bias=config.attention_bias,
+            attention_bias=config.attention_bias,
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.feedforward = SwiGLUFeedForward(
@@ -29,7 +29,7 @@ class QwenBlock(nn.Module):
             bias=config.mlp_bias,
         )
 
-    def forward(self, x, mask, pos_embedding):
+    def forward(self, x, mask=None, pos_embedding=None):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
@@ -38,7 +38,7 @@ class QwenBlock(nn.Module):
             value=x,
             attn_mask=mask,
             pos_embedding=pos_embedding,
-            is_causal=True,
+            is_causal=mask is None,
         )
 
         x = skip + attention_score
@@ -53,11 +53,34 @@ class QwenBlock(nn.Module):
 
 
 class Qwen3DenseModel(PreTrainedModel):
+    _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+
+    def _init_weights(self, module):
+        std = self.config.initializer_range
+
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+
+            if module.bias is not None:
+                module.bias.data.zero_()
+
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+
+        elif isinstance(module, nn.RMSNorm):
+            module.weight.data.fill_(1.0)
+
     def __init__(self, config: Qwen3DenseConfig):
         super().__init__(config)
         self.config = config
+        self.pad_token_id = config.pad_token_id
 
-        self.embedding_layer = nn.Embedding(config.vocab_size, config.hidden_dim)
+        self.embedding_layer = nn.Embedding(
+            config.vocab_size, config.hidden_dimi, config.pad_token_id
+        )
 
         self.transformer_blocks = nn.ModuleList(
             [QwenBlock(config) for _ in range(config.num_hidden_layers)]
@@ -70,15 +93,20 @@ class Qwen3DenseModel(PreTrainedModel):
         )
 
         self.final_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.output_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
 
-    def forward(self, x, mask):
+        if config.tie_word_embeddings:
+            self._tie_or_clone_weights(self.embedding_layer, self.lm_head)
+
+        self.post_init()
+
+    def forward(self, x, mask=None):
         x = self.embedding_layer(x)
 
         for block in self.transformer_blocks:
             x = block(x, mask, self.rope)
 
         x = self.final_norm(x)
-        logits = self.output_head(x)
+        logits = self.lm_head(x)
 
         return logits

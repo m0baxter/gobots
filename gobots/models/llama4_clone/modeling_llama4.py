@@ -3,11 +3,12 @@ from transformers import PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
-from .configuration_llama3 import Llama3Config
+from ..mixture_of_experts import MixtureOfExperts
+from .configuration_llama4 import Llama4Config
 
 
-class LlamaBlock(nn.Module):
-    def __init__(self, config: Llama3Config):
+class Llama4Block(nn.Module):
+    def __init__(self, config: Llama4Config, index: int):
         super().__init__()
         self.input_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.attention = GroupedQueryAttention(
@@ -17,17 +18,28 @@ class LlamaBlock(nn.Module):
             E_total=config.hidden_dim,
             num_heads=config.num_attention_heads,
             num_kv_groups=config.num_key_value_heads,
-            qk_norm=False,
+            qk_norm=config.use_qk_norm,
             rms_norm_eps=config.rms_norm_eps,
             dropout=config.attention_dropout,
             attention_bias=config.attention_bias,
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.feedforward = SwiGLUFeedForward(
-            input_dim=config.hidden_dim,
-            intermediary_dim=config.intermediate_dim,
-            bias=config.mlp_bias,
-        )
+
+        if index % config.interleave_moe_layer_step == 0:
+            self.feedforward = SwiGLUFeedForward(
+                input_dim=config.hidden_dim,
+                intermediary_dim=config.intermediate_size_mlp,
+                bias=config.mlp_bias,
+            )
+
+        else:
+            self.feedforward = MixtureOfExperts(
+                n_shared_experts=1,
+                n_routed_experts=config.num_local_experts,
+                hidden_size=config.hidden_dim,
+                intermediate_size=config.intermediate_size,
+                num_experts_per_token=config.num_experts_per_tok,
+            )
 
     def forward(self, x, mask=None, pos_embedding=None):
         skip = x
@@ -52,14 +64,13 @@ class LlamaBlock(nn.Module):
         return x
 
 
-class Llama3Model(PreTrainedModel):
+class Llama4Model(PreTrainedModel):
     _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
 
         if isinstance(module, nn.Linear):
-
             module.weight.data.normal_(mean=0.0, std=std)
 
             if module.bias is not None:
@@ -74,19 +85,22 @@ class Llama3Model(PreTrainedModel):
         elif isinstance(module, nn.RMSNorm):
             module.weight.data.fill_(1.0)
 
-    def __init__(self, config: Llama3Config):
+        elif isinstance(module, MixtureOfExperts):
+            module.gate_up_proj.data.normal_(mean=0.0, std=std)
+            module.gate_down_proj.data.normal_(mean=0.0, std=std)
+
+    def __init__(self, config: Llama4Config):
         super().__init__(config)
         self.config = config
-        self.pad_token_id = config.pad_token_id
+        self.pad_token_id
 
         self.embedding_layer = nn.Embedding(
             config.vocab_size, config.hidden_dim, config.pad_token_id
         )
 
         self.transformer_blocks = nn.ModuleList(
-            [LlamaBlock(config) for _ in range(config.num_hidden_layers)]
+            [Llama4Block(config, index) for index in range(config.num_hidden_layers)]
         )
-
         self.rope = RotaryPositionalEmbeddings(
             dim=config.hidden_dim // config.num_attention_heads,
             max_seq_len=config.max_position_embeddings,

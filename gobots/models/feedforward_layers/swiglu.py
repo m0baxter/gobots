@@ -2,7 +2,9 @@ import torch.nn as nn
 
 
 class SwiGLUFeedForward(nn.Module):
-    def __init__(self, input_dim: int, intermediary_dim: int, bias: bool = False):
+    def __init__(
+        self, input_dim: int, intermediary_dim: int, bias: bool = False, **kwargs
+    ):
         super().__init__()
 
         self.fc1 = nn.Linear(input_dim, intermediary_dim, bias=bias)
