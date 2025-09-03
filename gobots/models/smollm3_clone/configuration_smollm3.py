@@ -4,8 +4,10 @@ from transformers import PretrainedConfig
 class SmolLM3Config(PretrainedConfig):
     """
     Args:
-       vocab_size (`int`, *optional*, defaults to 32000):
+        vocab_size (`int`, *optional*, defaults to 32000):
           Vocabulary size for the model.
+        pad_token_id (`int | None` defaults to None):
+          id of the padding token.
         hidden_dim: (`int`, *optional* default to 2048)
           The embedding dimension for tokens.
        intermediate_dim: (`int` *optional* defaults to 8192)
@@ -35,6 +37,7 @@ class SmolLM3Config(PretrainedConfig):
     def __init__(
         self,
         vocab_size: int = 32000,
+        pad_token_id: int | None = None,
         hidden_dim: int = 2048,
         intermediate_dim: int = 8192,
         num_attention_heads: int = 32,
@@ -47,8 +50,13 @@ class SmolLM3Config(PretrainedConfig):
         no_rope_layer_interval: int = 4,
         max_position_embeddings: int = 4096,
         rope_base: float = 500000.0,
+        tie_word_embeddings: bool = False,
+        initializer_range: float = 0.2,
         **kwargs,
     ):
+        super().__init__(
+            pad_token_id=pad_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
+        )
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.intermediate_dim = intermediate_dim
@@ -62,5 +70,4 @@ class SmolLM3Config(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.max_position_embeddings = max_position_embeddings
         self.rope_base = rope_base
-
-        super().__init__(**kwargs)
+        self.initializer_range = initializer_range

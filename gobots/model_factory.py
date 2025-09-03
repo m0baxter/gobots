@@ -7,6 +7,7 @@ def build_llama_3p2_1b():
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
     config = Llama3Config(
         vocab_size=128256,
+        pad_token_id=128004,
         hidden_dim=2048,
         intermediate_dim=8192,
         num_attention_heads=32,
@@ -18,6 +19,7 @@ def build_llama_3p2_1b():
         rms_norm_eps=1e-05,
         max_position_embeddings=131072,
         rope_base=500000.0,
+        initializer_range=0.02,
     )
     model = Llama3Model(config)
 
@@ -41,6 +43,7 @@ def build_qwen3_dense_4b():
         rms_norm_eps=1e-06,
         max_position_embeddings=40960,
         rope_base=1000000,
+        initializer_range=0.02,
     )
     model = Qwen3DenseModel(config)
 
@@ -53,6 +56,7 @@ def build_smollm3_3b():
     tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM3-3B")
     config = SmolLM3Config(
         vocab_size=128256,
+        pad_token_id=128004,
         hidden_dim=2048,
         intermediate_dim=11008,
         num_attention_heads=16,
@@ -65,6 +69,7 @@ def build_smollm3_3b():
         no_rope_layer_interval=4,
         max_position_embeddings=65536,
         rope_base=5000000.0,
+        initializer_range=0.02,
     )
     model = SmolLM3Model(config)
 
@@ -93,6 +98,7 @@ def build_llama4_scout_17b_16e():
         rms_norm_eps=1e-05,
         max_position_embeddings=262144,
         rope_base=500000.0,
+        initializer_range=0.02,
     )
     model = Llama4Model(config)
 
@@ -127,6 +133,7 @@ def build_deepseek_v3():
         qk_rope_head_dim=64,
         v_head_dim=128,
         num_nextn_predict_layers=1,
+        initializer_range=0.02,
         mtp_config={
             "attention_type": "multi_head_latent_attention",
             "d_model": 7168,

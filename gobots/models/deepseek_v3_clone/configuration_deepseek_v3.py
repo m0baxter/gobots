@@ -7,7 +7,7 @@ class DeepSeekV3Config(PretrainedConfig):
     Args:
        vocab_size (`int`, *optional*, defaults to 32000):
           Vocabulary size for the model.
-        pad_token_id (`int`):
+        pad_token_id (`int | None` defaults to None):
           id of the padding token.
         hidden_dim: (`int`, *optional* default to 2048)
           The embedding dimension for tokens.
@@ -53,12 +53,16 @@ class DeepSeekV3Config(PretrainedConfig):
           parameters for the multitoken prediction heads.
        num_nextn_predict_layers (`int` *optional* defaults to 0):
           number of multi token prediction layers to add.
+       tie_word_embeddings (`bool` *optional* defaults to False):
+          whether to tie the weights of the embedding layer and the lm_head.
+       initializer_range (`float` *optional* defaults to 0.02):
+          value to use when initializing model weights.
     """
 
     def __init__(
         self,
         vocab_size: int = 32000,
-        pad_token_id: int = 0,
+        pad_token_id: int | None = 0,
         hidden_dim: int = 2048,
         intermediate_dim: int = 8192,
         moe_intermediate_size: int = 16384,
@@ -81,11 +85,14 @@ class DeepSeekV3Config(PretrainedConfig):
         v_head_dim: int = 128,
         num_nextn_predict_layers: int = 0,
         mtp_config: dict[str, Any] | None = None,
+        tie_word_embeddings: bool = False,
+        initializer_range: float = 0.2,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(
+            pad_token_id=pad_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
+        )
         self.vocab_size = vocab_size
-        self.pad_token_id = pad_token_id
         self.hidden_dim = hidden_dim
         self.intermediate_dim = intermediate_dim
         self.moe_intermediate_size = moe_intermediate_size
@@ -108,3 +115,4 @@ class DeepSeekV3Config(PretrainedConfig):
         self.v_head_dim = v_head_dim
         self.num_nextn_predict_layers = num_nextn_predict_layers
         self.mtp_config = mtp_config
+        self.initializer_range = initializer_range

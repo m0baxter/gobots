@@ -28,11 +28,18 @@ class Llama3Config(PretrainedConfig):
           the base for the RoPE embedding.
        rms_norm_eps (`float` *optional* defaults to 1E-05):
           regularizer for rms norm layers
+       pad_token_id (`int | None` *optional* defaults to None):
+          id of the padding token.
+       tie_word_embeddings (`bool` *optional* defaults to False):
+          whether to tie the embedding and lm_head weights.
+       initializer_range (`float` *optional* defaults to 0.02):
+          value to use when initializing model weights.
     """
 
     def __init__(
         self,
         vocab_size: int = 32000,
+        pad_token_id: int | None = None,
         hidden_dim: int = 2048,
         intermediate_dim: int = 8192,
         num_attention_heads: int = 32,
@@ -44,8 +51,13 @@ class Llama3Config(PretrainedConfig):
         rms_norm_eps: float = 1e-05,
         max_position_embeddings: int = 4096,
         rope_base: float = 500000.0,
+        tie_word_embeddings: bool = False,
+        initializer_range: float = 0.2,
         **kwargs,
     ):
+        super().__init__(
+            pad_token_id=pad_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
+        )
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.intermediate_dim = intermediate_dim
@@ -58,5 +70,4 @@ class Llama3Config(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.max_position_embeddings = max_position_embeddings
         self.rope_base = rope_base
-
-        super().__init__(**kwargs)
+        self.initializer_range = initializer_range

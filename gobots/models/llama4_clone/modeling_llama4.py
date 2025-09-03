@@ -65,11 +65,36 @@ class Llama4Block(nn.Module):
 
 
 class Llama4Model(PreTrainedModel):
+    def _init_weights(self, module):
+        std = self.config.initializer_range
+
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+
+            if module.bias is not None:
+                module.bias.data.zero_()
+
+            elif isinstance(module, nn.Embedding):
+                module.weight.data.normal_(mean=0.0, std=std)
+
+                if module.padding_idx is not None:
+                    module.weight.data[module.padding_idx].zero_()
+
+            elif isinstance(module, nn.RMSNorm):
+                module.weight.data.fill_(1.0)
+
+            elif isinstance(module, MixtureOfExperts):
+                module.gate_up_proj.data.normal_(mean=0.0, std=std)
+                module.gate_down_proj.data.normal_(mean=0.0, std=std)
+
     def __init__(self, config: Llama4Config):
         super().__init__(config)
         self.config = config
+        self.pad_token_id
 
-        self.embedding_layer = nn.Embedding(config.vocab_size, config.hidden_dim)
+        self.embedding_layer = nn.Embedding(
+            config.vocab_size, config.hidden_dim, config.pad_token_id
+        )
 
         self.transformer_blocks = nn.ModuleList(
             [Llama4Block(config, index) for index in range(config.num_hidden_layers)]
@@ -82,6 +107,8 @@ class Llama4Model(PreTrainedModel):
 
         self.final_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_dim, config.vocab_size, bias=False)
+
+        self.post_init()
 
     def forward(self, x, mask=None):
         x = self.embedding_layer(x)
