@@ -59,7 +59,6 @@ class Llama3Model(PreTrainedModel):
         std = self.config.initializer_range
 
         if isinstance(module, nn.Linear):
-
             module.weight.data.normal_(mean=0.0, std=std)
 
             if module.bias is not None:

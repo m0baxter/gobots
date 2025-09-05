@@ -12,6 +12,7 @@ class MixtureOfExperts(nn.Module):
         hidden_size: int = 512,
         intermediate_size: int = 2048,
         num_experts_per_token: int = 8,
+        expert_bias_update_rate: float = 0.001,
         **kwargs,
     ):
         super().__init__()
@@ -47,6 +48,9 @@ class MixtureOfExperts(nn.Module):
         self.router = nn.Linear(hidden_size, n_routed_experts, bias=False)
         self.sigmoid = nn.Sigmoid()
 
+        self.register_buffer("expert_bias", torch.zeros(n_routed_experts))
+        self.expert_bias_update_rate = expert_bias_update_rate
+
     def forward(self, x):
         input_shape = x.shape
         shared_output = x
@@ -54,11 +58,11 @@ class MixtureOfExperts(nn.Module):
         for shared_expert in self.shared_experts:
             shared_output = shared_output + shared_expert(shared_output)
 
-        router_logits = self.router(x)
-        # apply sigmoid?
-        routing_weights, selected_experts = torch.topk(
-            router_logits, self.num_experts_per_token, dim=-1
+        router_logits = self.sigmoid(self.router(x))
+        _, selected_experts = torch.topk(
+            router_logits + self.expert_bias, self.num_experts_per_token, dim=-1
         )
+        routing_weights = router_logits.gather(2, selected_experts)
         routing_weights = F.softmax(routing_weights, dim=-1)
 
         flat_x = x.view(-1, self.hidden_size)  # (B*T, d_hidden_size)
@@ -70,11 +74,13 @@ class MixtureOfExperts(nn.Module):
         )  # (B*T, num_experts_per_token)
 
         routed_output = torch.zeros_like(x)
+        expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
 
         for k in range(self.num_experts_per_token):
             expert_idx = flat_selected_experts[
                 :, k
             ]  # Indices of the k-th best expert for each token (B*T)
+            expert_load += torch.bincount(expert_idx, minlength=self.n_routed_experts)
 
             # Get weights for the selected experts
             gate_up_w_k = self.gate_up_proj[
@@ -105,5 +111,14 @@ class MixtureOfExperts(nn.Module):
                 :, k
             ].unsqueeze(1)
             routed_output = routed_output + expert_output_weighted_k.view(input_shape)
+
+        if self.training:
+            with torch.no_grad():
+                mean_load = expert_load.mean()
+                self.expert_bias += self.expert_bias_update_rate * torch.sign(
+                    mean_load - expert_load
+                )
+
+                print(expert_load, mean_load)
 
         return x + shared_output + routed_output

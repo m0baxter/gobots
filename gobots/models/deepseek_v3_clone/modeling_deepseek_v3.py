@@ -142,6 +142,7 @@ class DeepSeekV3Model(PreTrainedModel):
 
         if self.num_nextn_predict_layers > 0:
             b, s, d = x.shape
+            mtp_logits = []
 
             current_input_ids = input_ids
             current_hidden = x
@@ -151,20 +152,10 @@ class DeepSeekV3Model(PreTrainedModel):
                 # determine next token:
                 next_token = current_logits[:, -1, :].argmax(dim=-1)
 
-                # pad inputs and drop first token:
+                # add to sequence and drop first:
                 current_input_ids = torch.cat(
-                    [
-                        current_input_ids,
-                        self.pad_token_id * torch.ones(b, 1, dtype=int),
-                    ],
-                    dim=-1,
+                    [current_input_ids, next_token.view(b, 1)], dim=-1
                 )[:, 1:]
-
-                # replace first padding token with next token:
-                first_pad_idx = (
-                    (current_input_ids == self.pad_token_id).to(int).argmax(dim=1)
-                )
-                current_input_ids[range(b), first_pad_idx] = next_token
 
                 # apply mpt head
                 embeds = self.embedding_layer(current_input_ids)
@@ -172,13 +163,8 @@ class DeepSeekV3Model(PreTrainedModel):
 
                 # add new logit to output
                 current_logits = self.lm_head(current_hidden)
+                mtp_logits.append(current_logits)
 
-                logits = torch.cat(
-                    [
-                        logits,
-                        current_logits[:, -1, :].view(b, 1, self.config.vocab_size),
-                    ],
-                    dim=1,
-                )
+            return logits, mtp_logits
 
         return logits
