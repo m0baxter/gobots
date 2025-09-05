@@ -34,7 +34,8 @@ The GoBots to Hugging Face's Transformers
     - [Qwen3 dense](#qwen3-dense)
     - [SmolLM33](#smollm3)
   - [Mixture of Experts Architectures](#mixture-of-experts-architectures)
-    - [Llama 4](#llama-4) 
+    - [Llama 4](#llama-4)
+    - [DeepSeek V3](#deepseek-v3)
 
 ## Architectural Components
 
