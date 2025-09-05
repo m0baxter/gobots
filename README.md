@@ -24,6 +24,7 @@ The GoBots to Hugging Face's Transformers
     - [Multi-Head Attention](#multi-head-attention)
     - [Multi-Query Attention](#multi-query-attention)
     - [Grouped-Query Attention](#grouped-query-attention)
+    - [Multi-Head Latent Attention](#multi-head-latent-attention)
   - [Feedforward Network](#feedforward-network)
     - [Dense](#dense)
     - [Mixture of Experts](#mixture-of-experts)
@@ -312,10 +313,57 @@ flowchart TB
    khk --> qhm1["q(h-1)"]
    khk --> qh["q(h)"]
 ```
+
+#### Multi-Head Latent Attention
+
+In multi-head latent attention (MLA) the querys, keys, and values are all compressed into lower rank spaces before applying the attention operation. The primary purpose of this operation is to lower the size of the KV cache
+at inference time. In order to incorporate positional embeddings while preserving the benefits of the low-rank projection the DeepSeek architects created a decoupled RoPE mechanism. Here we concatenate two vectors, one which carries
+the content information and another which bears the RoPE positional information
+
+$$
+c_t^{KV} = W^{DKV} h_t,
+$$
+
+$$
+[k^C_{t,1}; k^C_{t,2}; \dots, k^C_{t,n_h}] = k^C_t = W^{UK} c^{KV}_t,
+$$
+
+$$
+k^R_t = \mathrm{RoPE}(W^{KR} h_t),
+$$
+
+$$
+k_{t,i} = [k^C_{t,i}; k^R_t]
+$$
+
+$$
+[v^C_{t,1}; v^C_{t,2}; \dots, v^C_{t,n_h}] = v^C_t = W^{UV} c^{KV}_t,
+$$
+
+$$
+c_t^{Q} = W^{DQ} h_t,
+$$
+
+$$
+[q^C_{t,1}; q^C_{t,2}; \dots, q^C_{t,n_h}] = q^C_t = W^{UQ} c^{Q}_t,
+$$
+
+$$
+[q^R_{t,1}; q^R_{t,2}; \dots, q^R_{t,n_h}] = q^R_t = \mathrm{RoPE}(W^{QR} c^Q_t),
+$$
+
+$$
+q_{t,i} = [q^C_{t,i}; q^R_{t,i}]
+$$
+
+We then apply attention between the query, key and value represented by $q_{t,i}$, $k_{t,i}$, and $v_{t,i}$ respectively. Where $n_h$ is the number of attention heads, $d_h$ the dimension of each head,
+the compression dimensions $d_c (\ll d_h n_h)$ and $d_c^\prime (\ll d_h n_h)$. The projections are $W^{DKV} \in \mathbb{R}^{d_c \times d}$, $W^{UK}, W^{UV} \in \mathbb{R}^{d_h n_h \times d_c}$,
+$W^{KR} \in \mathbb{R}^{d^R_h \times d}$, $W^{DQ} \in \mathbb{R}^{d^\prime_c \times d}$, $W^{UQ} \in \mathbb{R}^{d_h n_h \times d^\prime_c}$, $W^QR \ in \mathbb{R}^{d^R_h n_h \times d^\prime_c}$.
+
 ### Feedforward Network
 
-The second common component of all transformer architectures is the feedforward layer. The feedforward layer is applied after the attention mechanism as a way to add extra information to the token embeddings and to prepare the output of the attention block
-for the next transformer block layer in the stack.
+The second common component of all transformer architectures is the feedforward layer. The feedforward layer is applied after the attention mechanism as a way to add extra information to the token embeddings and to prepare the
+output of the attention block for the next transformer block layer in the stack.
 
 #### dense
 
@@ -323,7 +371,7 @@ A dense feedforward layer is simply a dense neural network layer that is applied
 
 #### Mixture of Experts
 
-A mixture of experts (MoE) layer consists of two sets of parallel dense feedforward layers, known as experts. One set, the shared experts, are applied to all tokens containing $N_s$ experts. For the other set, the routed experts, $k$ experts are choosen per token from the $N_r$ available experts. A routing model is used to
+A mixture of experts (MoE) layer consists of two sets of parallel dense feedforward layers, known as experts. One set, the shared experts, are applied to all tokens containing $N_s$ experts. For the other set, the routed experts, $K_r$ experts are choosen per token from the $N_r$ available experts. A routing model is used to
 create a gate which decides which experts will be activated for a given token.
 
 Several versions of MoE have been proposed, below we follow the one used in [DeepSeek V3](https://arxiv.org/abs/2412.19437) when calculating the gating function
@@ -360,7 +408,31 @@ flowchart BT
    input -- "skip" --> merge
 ```
 
-*ADD load balancing discussion*
+A problem that might arise when training an MoE layer is that the model may learn to use one or a few of the experts exclusively. A popular solution to this problem is to add an auxiliary loss which enforces load balancing amongst experts ($T$ being the sequence length)
+
+$$
+\mathcal{L}_\mathrm{balance} = \alpha \sum\limits^{N_r}_{i = 1} f_i P_i
+$$
+
+$$
+f_i = \frac{N_r}{K_r T} \sum\limits^T_{t=1} \mathbf{id}(\mbox{token } t \mbox{ selects expert } i)
+$$
+
+$$
+P_i = \frac{1}{T} \sum\limits^T_{t=1} s_{i,t}.
+$$
+
+Adding this loss may hamper model accuracy, an alternative that provides load balancing without an auxiliary loss can be found [here](https://arxiv.org/abs/2408.15664)). In this implementaton
+a bias is added when finding the top-k experts.
+
+$$
+g^{\prime}_{i,t} = \begin{cases}
+s_{i,t} & s_{i,t} + b_i\in \mathrm{TopK}(\{s_{i,t} + b_i \mid 1 \leq j \leq N_r \}) \\
+0 & \mathrm{else}
+\end{cases}
+$$
+
+At training time the biases are initialized to zero and updated by adding or subtracting a small value depending on whether the given expert is over or under loaded.
 
 ## LLM Architectures
 
@@ -580,3 +652,75 @@ config = Llama4Config(
 model = Llama4Model(config)
 ```
 
+#### DeepSeek V3
+
+Another popular model which employs MoE feedforward layers is DeepSeek V3. The primary differences between this model and Llama 4 are the use of MLA instead of GQA, selects more than one routed expert per layer,and begins with `first_k_dense_replace` dense layers. Additionally this model adds $n_\mathrm{MTP}$ multi-token prediction heads to predict the next $1 + n_\mathrm{MTP}$
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
+   subgraph model[LLM Model]
+      embedding --- split1
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["MLA (num_attention_heads, q_lora_rank, kv_lora_rank)"]
+         pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim) / MoE (num_experts_per_tok, num_local_experts)"] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
+      norm_final --> mtp["MTP heads (num_nextn_predict_layers)"] -- "extend sequence" --> output_layer
+   end
+   output_layer --> output[sequence decoder] --> Output
+   
+style model fill: lightblue
+style block fill: pink
+```
+
+```python
+from gobots.models.deepseek_v3_clone import DeepSeekV3Config, DeepSeekV3Model
+
+config = DeepSeekV3Config(
+    vocab_size=129280,
+    pad_token_id=2,
+    hidden_dim=7168,
+    intermediate_dim=18432,
+    moe_intermediate_size=2048,
+    num_experts_per_tok=8,
+    n_routed_experts=256,
+    num_attention_heads=128,
+    num_hidden_layers=61,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    rms_norm_eps=1e-06,
+    max_position_embeddings=163840,
+    rope_base=10000.0,
+    n_shared_experts=1,
+    first_k_dense_replace=3,
+    kv_lora_rank=512,
+    q_lora_rank=1536,
+    qk_nope_head_dim=128,
+    qk_rope_head_dim=64,
+    v_head_dim=128,
+    num_nextn_predict_layers=1,
+    initializer_range=0.02,
+    mtp_config={
+        "attention_type": "multi_head_latent_attention",
+        "d_model": 7168,
+        "num_heads": 128,
+        "v_head_dim": 128,
+        "q_lora_rank": 1536,
+        "kv_lora_rank": 512,
+        "qk_rope_head_dim": 128,
+        "qk_nope_head_dim": 64, 
+        "dropout": 0.0,
+        "attention_bias": False,
+        "feedforward_type": "moe",
+        "n_shared_experts": 1,
+        "n_routed_experts": 256,
+        "intermediate_size": 2048,
+        "num_experts_per_token": 1,
+    },  
+)
+model = DeepSeekV3Model(config)
+```
