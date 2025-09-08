@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import PretrainedConfig
+from transformers import GradientCheckpointingLayer, PretrainedConfig
 from ..attention_mechanisms import (
     GroupedQueryAttention,
     MultiHeadAttention,
@@ -20,9 +20,10 @@ _feedforward_layers = {
 }
 
 
-class MultiTokenPredictionHead(nn.Module):
+class MultiTokenPredictionHead(GradientCheckpointingLayer):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
+        self.feedforward_type = config.mtp_config["feedforward_type"]
 
         # Combine previous hidden state with future token embedding
         self.combine_proj = nn.Linear(
@@ -54,6 +55,14 @@ class MultiTokenPredictionHead(nn.Module):
 
         # Process through transformer components
         hidden = hidden + self.attention(self.attn_norm(hidden))
-        hidden = hidden + self.feedforward(self.mlp_norm(hidden))
 
-        return hidden
+        auxiliary_losses = None
+
+        if self.feedforward_type == "moe":
+            output, auxiliary_losses = self.feedforward(self.mlp_norm(hidden))
+            hidden = hidden + output
+
+        else:
+            hidden = hidden + self.feedforward(self.mlp_norm(hidden))
+
+        return hidden, auxiliary_losses

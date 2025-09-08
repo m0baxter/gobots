@@ -1,12 +1,12 @@
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
 from .configuration_qwen3_dense import Qwen3DenseConfig
 
 
-class QwenBlock(nn.Module):
+class QwenBlock(GradientCheckpointingLayer):
     def __init__(self, config: Qwen3DenseConfig):
         super().__init__()
         self.input_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
@@ -54,6 +54,7 @@ class QwenBlock(nn.Module):
 
 class Qwen3DenseModel(PreTrainedModel):
     _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+    supports_gradient_checkpointing = True
 
     def _init_weights(self, module):
         std = self.config.initializer_range

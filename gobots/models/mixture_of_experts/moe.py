@@ -74,13 +74,40 @@ class MixtureOfExperts(nn.Module):
         )  # (B*T, num_experts_per_token)
 
         routed_output = torch.zeros_like(x)
-        expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
+
+        auxiliary_loss = None
+
+        if self.training:
+            # calculate axiliary loss:
+            normalized_scores = router_logits / router_logits.sum(axis=1, keepdim=True)
+
+            expert_prob = normalized_scores.mean(axis=1)
+
+            indicator = torch.zeros_like(router_logits)
+            indicator.scatter_(2, selected_experts, 1)
+
+            expert_weighting = (
+                indicator.sum(dim=1)
+                * self.n_routed_experts
+                / (self.num_experts_per_token * input_shape[1])
+            )
+
+            auxiliary_loss = (expert_weighting * expert_prob).sum(axis=-1)
+
+            print(auxiliary_loss.shape, input_shape)
+
+            # set up variables for auxiliary-loss-free load balancing:
+            expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
 
         for k in range(self.num_experts_per_token):
             expert_idx = flat_selected_experts[
                 :, k
             ]  # Indices of the k-th best expert for each token (B*T)
-            expert_load += torch.bincount(expert_idx, minlength=self.n_routed_experts)
+
+            if self.training:
+                expert_load += torch.bincount(
+                    expert_idx, minlength=self.n_routed_experts
+                )
 
             # Get weights for the selected experts
             gate_up_w_k = self.gate_up_proj[
@@ -119,6 +146,4 @@ class MixtureOfExperts(nn.Module):
                     mean_load - expert_load
                 )
 
-                print(expert_load, mean_load)
-
-        return x + shared_output + routed_output
+        return x + shared_output + routed_output, auxiliary_loss

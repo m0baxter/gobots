@@ -1,5 +1,5 @@
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
@@ -7,9 +7,10 @@ from ..mixture_of_experts import MixtureOfExperts
 from .configuration_llama4 import Llama4Config
 
 
-class Llama4Block(nn.Module):
+class Llama4Block(GradientCheckpointingLayer):
     def __init__(self, config: Llama4Config, index: int):
         super().__init__()
+        self.is_dense = index % config.interleave_moe_layer_step == 0
         self.input_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.attention = GroupedQueryAttention(
             E_q=config.hidden_dim,
@@ -25,7 +26,7 @@ class Llama4Block(nn.Module):
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
 
-        if index % config.interleave_moe_layer_step == 0:
+        if self.is_dense:
             self.feedforward = SwiGLUFeedForward(
                 input_dim=config.hidden_dim,
                 intermediary_dim=config.intermediate_size_mlp,
@@ -57,15 +58,22 @@ class Llama4Block(nn.Module):
         skip = x
 
         x = self.mid_norm(x)
-        x = self.feedforward(x)
+        auxiliary_losses = None
+
+        if self.is_dense:
+            x = self.feedforward(x)
+
+        else:
+            x, auxiliary_losses = self.feedforward(x)
 
         x = skip + x
 
-        return x
+        return x, auxiliary_losses
 
 
 class Llama4Model(PreTrainedModel):
     _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+    supports_gradient_checkpointing = True
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -92,7 +100,7 @@ class Llama4Model(PreTrainedModel):
     def __init__(self, config: Llama4Config):
         super().__init__(config)
         self.config = config
-        self.pad_token_id
+        self.pad_token_id = config.pad_token_id
 
         self.embedding_layer = nn.Embedding(
             config.vocab_size, config.hidden_dim, config.pad_token_id
@@ -117,11 +125,15 @@ class Llama4Model(PreTrainedModel):
 
     def forward(self, x, mask=None):
         x = self.embedding_layer(x)
+        auxiliary_losses = []
 
         for block in self.transformer_blocks:
-            x = block(x, mask, self.rope)
+            x, aux_loss = block(x, mask, self.rope)
+
+            if aux_loss is not None:
+                auxiliary_losses.append(aux_loss)
 
         x = self.final_norm(x)
         logits = self.lm_head(x)
 
-        return logits
+        return {"logits": logits, "auxiliary_losses": auxiliary_losses}

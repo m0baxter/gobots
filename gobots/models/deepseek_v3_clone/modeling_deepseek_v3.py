@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import MultiHeadLatentAttention
 from ..feedforward_layers import SwiGLUFeedForward
@@ -9,9 +9,10 @@ from ..multitoken_prediction_layer import MultiTokenPredictionHead
 from .configuration_deepseek_v3 import DeepSeekV3Config
 
 
-class DeepSeekV3Block(nn.Module):
+class DeepSeekV3Block(GradientCheckpointingLayer):
     def __init__(self, config: DeepSeekV3Config, index: int):
         super().__init__()
+        self.dense_layer = index < config.first_k_dense_replace
         self.input_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.attention = MultiHeadLatentAttention(
             d_model=config.hidden_dim,
@@ -26,7 +27,7 @@ class DeepSeekV3Block(nn.Module):
         )
         self.mid_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
 
-        if index < config.first_k_dense_replace:
+        if self.dense_layer:
             self.feedforward = SwiGLUFeedForward(
                 input_dim=config.hidden_dim,
                 intermediary_dim=config.intermediate_dim,
@@ -56,15 +57,24 @@ class DeepSeekV3Block(nn.Module):
         skip = x
 
         x = self.mid_norm(x)
-        x = self.feedforward(x)
+
+        auxiliary_losses = None
+
+        if self.dense_layer:
+            print("herererere")
+            x = self.feedforward(x)
+
+        else:
+            x, auxiliary_losses = self.feedforward(x)
 
         x = skip + x
 
-        return x
+        return x, auxiliary_losses
 
 
 class DeepSeekV3Model(PreTrainedModel):
     _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+    supports_gradient_checkpointing = True
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -133,12 +143,18 @@ class DeepSeekV3Model(PreTrainedModel):
     def forward(self, x, mask=None):
         input_ids = x
         x = self.embedding_layer(x)
+        auxiliary_losses = []
 
         for block in self.transformer_blocks:
-            x = block(x, mask, self.rope)
+            x, aux_loss = block(x, mask, self.rope)
+
+            if aux_loss is not None:
+                auxiliary_losses.append(aux_loss)
 
         x = self.final_norm(x)
         logits = self.lm_head(x)
+
+        mtp_logits = None
 
         if self.num_nextn_predict_layers > 0:
             b, s, d = x.shape
@@ -159,12 +175,17 @@ class DeepSeekV3Model(PreTrainedModel):
 
                 # apply mpt head
                 embeds = self.embedding_layer(current_input_ids)
-                current_hidden = mtp_head(current_hidden, embeds)
+                current_hidden, aux_loss = mtp_head(current_hidden, embeds)
+
+                if aux_loss is not None:
+                    auxiliary_losses.append(aux_loss)
 
                 # add new logit to output
                 current_logits = self.lm_head(current_hidden)
                 mtp_logits.append(current_logits)
 
-            return logits, mtp_logits
-
-        return logits
+        return {
+            "logits": logits,
+            "mtp_logits": mtp_logits,
+            "auxiliary_losses": auxiliary_losses,
+        }
