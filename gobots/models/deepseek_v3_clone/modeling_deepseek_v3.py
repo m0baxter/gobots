@@ -61,7 +61,6 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
         auxiliary_losses = None
 
         if self.dense_layer:
-            print("herererere")
             x = self.feedforward(x)
 
         else:

@@ -94,8 +94,6 @@ class MixtureOfExperts(nn.Module):
 
             auxiliary_loss = (expert_weighting * expert_prob).sum(axis=-1)
 
-            print(auxiliary_loss.shape, input_shape)
-
             # set up variables for auxiliary-loss-free load balancing:
             expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
 
