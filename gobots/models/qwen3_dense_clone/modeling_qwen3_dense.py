@@ -3,6 +3,7 @@ from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
+from ..mask_utils import generate_block_mask
 from .configuration_qwen3_dense import Qwen3DenseConfig
 
 
@@ -33,12 +34,11 @@ class QwenBlock(GradientCheckpointingLayer):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
-            query=x,
-            key=x,
-            value=x,
-            attn_mask=mask,
-            pos_embedding=pos_embedding,
-            is_causal=mask is None,
+            x,
+            x,
+            x,
+            mask,
+            pos_embedding,
         )
 
         x = skip + attention_score
@@ -80,7 +80,7 @@ class Qwen3DenseModel(PreTrainedModel):
         self.pad_token_id = config.pad_token_id
 
         self.embedding_layer = nn.Embedding(
-            config.vocab_size, config.hidden_dimi, config.pad_token_id
+            config.vocab_size, config.hidden_dim, config.pad_token_id
         )
 
         self.transformer_blocks = nn.ModuleList(
@@ -101,8 +101,17 @@ class Qwen3DenseModel(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, document_ids=None):
+        b, s = x.shape
         x = self.embedding_layer(x)
+
+        if mask is None:
+            mask = generate_block_mask(
+                batch_size=b,
+                query_length=s,
+                key_value_length=s,
+                document_ids=document_ids,
+            )
 
         for block in self.transformer_blocks:
             x = block(x, mask, self.rope)
@@ -110,4 +119,4 @@ class Qwen3DenseModel(PreTrainedModel):
         x = self.final_norm(x)
         logits = self.lm_head(x)
 
-        return logits
+        return {"logits": logits}

@@ -3,6 +3,7 @@ from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
+from ..mask_utils import generate_block_mask
 from .configuration_smollm3 import SmolLM3Config
 
 
@@ -33,12 +34,11 @@ class SmolLMBlock(GradientCheckpointingLayer):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
-            query=x,
-            key=x,
-            value=x,
-            attn_mask=mask,
-            pos_embedding=pos_embedding,
-            is_causal=mask is None,
+            x,
+            x,
+            x,
+            mask,
+            pos_embedding,
         )
 
         x = skip + attention_score
@@ -102,8 +102,17 @@ class SmolLM3Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, document_ids=None):
+        b, s = x.shape
         x = self.embedding_layer(x)
+
+        if mask is None:
+            mask = generate_block_mask(
+                batch_size=b,
+                query_length=s,
+                key_value_length=s,
+                document_ids=document_ids,
+            )
 
         for i, block in enumerate(self.transformer_blocks, start=1):
             pos_embed = None if i % self.no_rope_layer_interval == 0 else self.rope
@@ -112,4 +121,4 @@ class SmolLM3Model(PreTrainedModel):
         x = self.final_norm(x)
         logits = self.lm_head(x)
 
-        return logits
+        return {"logits": logits}

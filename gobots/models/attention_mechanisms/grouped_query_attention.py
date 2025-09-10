@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.nn.attention.flex_attention import flex_attention
 
 
 class GroupedQueryAttention(nn.Module):
@@ -62,6 +62,7 @@ class GroupedQueryAttention(nn.Module):
             E_v, num_kv_groups * self.E_head, bias=attention_bias, **factory_kwargs
         )
 
+    @torch.compile(mode="max-autotune")
     def forward(
         self,
         query: torch.Tensor,
@@ -69,7 +70,6 @@ class GroupedQueryAttention(nn.Module):
         value: torch.Tensor,
         attn_mask=None,
         pos_embedding=None,
-        is_causal=False,
     ) -> torch.Tensor:
         """
         Forward pass; runs the following process:
@@ -112,13 +112,11 @@ class GroupedQueryAttention(nn.Module):
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)
-        attn_output = F.scaled_dot_product_attention(
+        attn_output = flex_attention(
             query,
             key,
             value,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout,
-            is_causal=is_causal,
+            block_mask=attn_mask,
             enable_gqa=True,
         )
         # (N, num_heads, L_t, E_head) -> (N, L_t, num_heads, E_head) -> (N, L_t, E_total)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention.flex_attention import flex_attention
 
 
 class MultiHeadAttention(nn.Module):
@@ -51,6 +52,7 @@ class MultiHeadAttention(nn.Module):
         assert E_total % num_heads == 0, "Embedding dim is not divisible by num_heads"
         self.E_head = E_total // num_heads
 
+    @torch.compile(mode="max-autotune")
     def forward(
         self,
         query: torch.Tensor,
@@ -113,8 +115,11 @@ class MultiHeadAttention(nn.Module):
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)
-        attn_output = F.scaled_dot_product_attention(
-            query, key, value, dropout_p=self.dropout, is_causal=is_causal
+        attn_output = flex_attention(
+            query,
+            key,
+            value,
+            block_mask=attn_mask,
         )
         # (N, num_heads, L_t, E_head) -> (N, L_t, num_heads, E_head) -> (N, L_t, E_total)
         attn_output = attn_output.transpose(1, 2).flatten(-2)

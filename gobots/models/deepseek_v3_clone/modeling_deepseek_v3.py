@@ -4,6 +4,7 @@ from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import MultiHeadLatentAttention
 from ..feedforward_layers import SwiGLUFeedForward
+from ..mask_utils import generate_block_mask
 from ..mixture_of_experts import MixtureOfExperts
 from ..multitoken_prediction_layer import MultiTokenPredictionHead
 from .configuration_deepseek_v3 import DeepSeekV3Config
@@ -47,10 +48,9 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
-            x=x,
-            attn_mask=mask,
-            pos_embedding=pos_embedding,
-            is_causal=mask is None,
+            x,
+            mask,
+            pos_embedding,
         )
 
         x = skip + attention_score
@@ -140,10 +140,19 @@ class DeepSeekV3Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, document_ids=None):
+        b, s = x.shape
         input_ids = x
         x = self.embedding_layer(x)
         auxiliary_losses = []
+
+        if mask is None:
+            mask = generate_block_mask(
+                batch_size=b,
+                query_length=s,
+                key_value_length=s,
+                document_ids=document_ids,
+            )
 
         for block in self.transformer_blocks:
             x, aux_loss = block(x, mask, self.rope)
@@ -163,8 +172,22 @@ class DeepSeekV3Model(PreTrainedModel):
             current_input_ids = input_ids
             current_hidden = x
             current_logits = logits
+            shifted_document_ids = document_ids
 
             for mtp_head in self.mtp_heads:
+                # shift document_ids to create new mask
+                if shifted_document_ids is not None:
+                    shifted_document_ids = torch.nn.functional.pad(
+                        shifted_document_ids, (0, 1), mode="replicate"
+                    )[:, 1:]
+
+                    mask = generate_block_mask(
+                        batch_size=b,
+                        query_length=s,
+                        key_value_length=s,
+                        document_ids=shifted_document_ids,
+                    )
+
                 # determine next token:
                 next_token = current_logits[:, -1, :].argmax(dim=-1)
 
@@ -175,7 +198,9 @@ class DeepSeekV3Model(PreTrainedModel):
 
                 # apply mpt head
                 embeds = self.embedding_layer(current_input_ids)
-                current_hidden, aux_loss = mtp_head(current_hidden, embeds)
+                current_hidden, aux_loss = mtp_head(
+                    current_hidden, embeds, mask, self.rope
+                )
 
                 if aux_loss is not None:
                     auxiliary_losses.append(aux_loss)

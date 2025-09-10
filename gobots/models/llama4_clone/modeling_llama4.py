@@ -3,6 +3,7 @@ from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
+from ..mask_utils import generate_block_mask
 from ..mixture_of_experts import MixtureOfExperts
 from .configuration_llama4 import Llama4Config
 
@@ -46,12 +47,11 @@ class Llama4Block(GradientCheckpointingLayer):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
-            query=x,
-            key=x,
-            value=x,
-            attn_mask=mask,
-            pos_embedding=pos_embedding,
-            is_causal=mask is None,
+            x,
+            x,
+            x,
+            mask,
+            pos_embedding,
         )
 
         x = skip + attention_score
@@ -123,9 +123,18 @@ class Llama4Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, document_ids=None):
+        b, s = x.shape
         x = self.embedding_layer(x)
         auxiliary_losses = []
+
+        if mask is None:
+            mask = generate_block_mask(
+                batch_size=b,
+                query_length=s,
+                key_value_length=s,
+                document_ids=document_ids,
+            )
 
         for block in self.transformer_blocks:
             x, aux_loss = block(x, mask, self.rope)
