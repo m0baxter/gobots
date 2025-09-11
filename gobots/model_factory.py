@@ -119,7 +119,6 @@ def build_deepseek_v3():
         n_routed_experts=256,
         num_attention_heads=128,
         num_hidden_layers=61,
-        num_hidden_layers=4,
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
