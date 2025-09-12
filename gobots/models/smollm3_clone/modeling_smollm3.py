@@ -30,7 +30,7 @@ class SmolLMBlock(GradientCheckpointingLayer):
             bias=config.mlp_bias,
         )
 
-    def forward(self, x, mask=None, pos_embedding=None):
+    def forward(self, x, mask=None, pos_embedding=None, input_pos=None):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
@@ -39,6 +39,7 @@ class SmolLMBlock(GradientCheckpointingLayer):
             x,
             mask,
             pos_embedding,
+            input_pos,
         )
 
         x = skip + attention_score
@@ -102,7 +103,7 @@ class SmolLM3Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None, document_ids=None):
+    def forward(self, x, mask=None, document_ids=None, input_pos=None):
         b, s = x.shape
         x = self.embedding_layer(x)
 
@@ -116,7 +117,7 @@ class SmolLM3Model(PreTrainedModel):
 
         for i, block in enumerate(self.transformer_blocks, start=1):
             pos_embed = None if i % self.no_rope_layer_interval == 0 else self.rope
-            x = block(x, mask, pos_embed)
+            x = block(x, mask, pos_embed, input_pos)
 
         x = self.final_norm(x)
         logits = self.lm_head(x)

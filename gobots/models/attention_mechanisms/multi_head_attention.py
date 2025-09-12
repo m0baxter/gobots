@@ -59,7 +59,6 @@ class MultiHeadAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_mask=None,
-        is_causal=False,
     ) -> torch.Tensor:
         """
         Forward pass; runs the following process:

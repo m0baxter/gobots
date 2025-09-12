@@ -61,6 +61,7 @@ class MultiHeadLatentAttention(nn.Module):
         x: torch.Tensor,
         attn_mask=None,
         pos_embedding=None,
+        input_pos=None,
     ):
         batch, seq_len, d_model = x.shape
 
@@ -86,8 +87,12 @@ class MultiHeadLatentAttention(nn.Module):
         )
 
         if pos_embedding:
-            q_pe = pos_embedding(q_pe.transpose(1, 2)).transpose(1, 2)
-            k_pe = pos_embedding(k_pe.transpose(1, 2)).transpose(1, 2)
+            q_pe = pos_embedding(q_pe.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
+            k_pe = pos_embedding(k_pe.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
 
         query_states = torch.cat([q_nope, q_pe], dim=-1)
         key_states = torch.cat(

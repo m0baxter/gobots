@@ -43,7 +43,7 @@ class Llama4Block(GradientCheckpointingLayer):
                 num_experts_per_token=config.num_experts_per_tok,
             )
 
-    def forward(self, x, mask=None, pos_embedding=None):
+    def forward(self, x, mask=None, pos_embedding=None, input_pos=None):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
@@ -52,6 +52,7 @@ class Llama4Block(GradientCheckpointingLayer):
             x,
             mask,
             pos_embedding,
+            input_pos,
         )
 
         x = skip + attention_score
@@ -123,7 +124,7 @@ class Llama4Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None, document_ids=None):
+    def forward(self, x, mask=None, document_ids=None, input_pos=None):
         b, s = x.shape
         x = self.embedding_layer(x)
         auxiliary_losses = []
@@ -137,7 +138,7 @@ class Llama4Model(PreTrainedModel):
             )
 
         for block in self.transformer_blocks:
-            x, aux_loss = block(x, mask, self.rope)
+            x, aux_loss = block(x, mask, self.rope, input_pos)
 
             if aux_loss is not None:
                 auxiliary_losses.append(aux_loss)

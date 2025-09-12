@@ -44,13 +44,14 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
                 num_experts_per_token=config.num_experts_per_tok,
             )
 
-    def forward(self, x, mask=None, pos_embedding=None):
+    def forward(self, x, mask=None, pos_embedding=None, input_pos=None):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
             x,
             mask,
             pos_embedding,
+            input_pos,
         )
 
         x = skip + attention_score
@@ -139,7 +140,7 @@ class DeepSeekV3Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None, document_ids=None):
+    def forward(self, x, mask=None, document_ids=None, input_pos=None):
         b, s = x.shape
         input_ids = x
         x = self.embedding_layer(x)
@@ -154,7 +155,7 @@ class DeepSeekV3Model(PreTrainedModel):
             )
 
         for block in self.transformer_blocks:
-            x, aux_loss = block(x, mask, self.rope)
+            x, aux_loss = block(x, mask, self.rope, input_pos)
 
             if aux_loss is not None:
                 auxiliary_losses.append(aux_loss)
@@ -172,6 +173,7 @@ class DeepSeekV3Model(PreTrainedModel):
             current_hidden = x
             current_logits = logits
             shifted_document_ids = document_ids
+            shifted_input_pos = input_pos
 
             for mtp_head in self.mtp_heads:
                 # shift document_ids to create new mask
@@ -187,6 +189,14 @@ class DeepSeekV3Model(PreTrainedModel):
                         document_ids=shifted_document_ids,
                     )
 
+                # shift the input positional ids:
+                if shifted_input_pos is not None:
+                    shifted_input_pos = torch.nn.functional.pad(
+                        shifted_input_pos, (0, 1), mode="replicate"
+                    )
+                    shifted_input_pos[:, -1] += 1
+                    shifted_input_pos = shifted_document_ids[:, 1:]
+
                 # determine next token:
                 next_token = current_logits[:, -1, :].argmax(dim=-1)
 
@@ -198,7 +208,11 @@ class DeepSeekV3Model(PreTrainedModel):
                 # apply mpt head
                 embeds = self.embedding_layer(current_input_ids)
                 current_hidden, aux_loss = mtp_head(
-                    current_hidden, embeds, mask, self.rope
+                    current_hidden,
+                    embeds,
+                    mask,
+                    self.rope,
+                    shifted_document_ids,
                 )
 
                 if aux_loss is not None:

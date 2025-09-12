@@ -70,6 +70,7 @@ class GroupedQueryAttention(nn.Module):
         value: torch.Tensor,
         attn_mask=None,
         pos_embedding=None,
+        input_pos=None,
     ) -> torch.Tensor:
         """
         Forward pass; runs the following process:
@@ -107,8 +108,12 @@ class GroupedQueryAttention(nn.Module):
             key = self.q_norm(key)
 
         if pos_embedding:
-            query = pos_embedding(query.transpose(1, 2)).transpose(1, 2)
-            key = pos_embedding(key.transpose(1, 2)).transpose(1, 2)
+            query = pos_embedding(query.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
+            key = pos_embedding(key.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)

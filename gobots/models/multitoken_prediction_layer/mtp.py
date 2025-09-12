@@ -45,7 +45,14 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
         self.attn_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
         self.mlp_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
 
-    def forward(self, prev_hidden, future_token_embed, mask=None, pos_embedding=None):
+    def forward(
+        self,
+        prev_hidden,
+        future_token_embed,
+        mask=None,
+        pos_embedding=None,
+        input_pos=None,
+    ):
         # Normalize inputs
         prev_norm = self.norm1(prev_hidden)
         future_norm = self.norm2(future_token_embed)
@@ -57,11 +64,18 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
 
         # Process through transformer components
         if self.attention_type == "multi_head_latent_attention":
-            hidden = hidden + self.attention(normed_hidden, mask, pos_embedding)
+            hidden = hidden + self.attention(
+                normed_hidden, mask, pos_embedding, input_pos
+            )
 
         else:
             hidden = hidden + self.attention(
-                normed_hidden, normed_hidden, normed_hidden, mask, pos_embedding
+                normed_hidden,
+                normed_hidden,
+                normed_hidden,
+                mask,
+                pos_embedding,
+                input_pos,
             )
 
         auxiliary_losses = None
