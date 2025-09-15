@@ -52,7 +52,7 @@ class Llama4Config(PretrainedConfig):
         pad_token_id: int | None = None,
         hidden_dim: int = 2048,
         interleave_moe_layer_step: int = 1,
-        intermediate_dim: int = 8192,
+        intermediate_size: int = 8192,
         intermediate_size_mlp: int = 16384,
         num_experts_per_tok: int = 1,
         num_local_experts: int = 16,
@@ -75,7 +75,9 @@ class Llama4Config(PretrainedConfig):
         )
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
-        self.intermediate_dim = intermediate_dim
+        self.intermediate_size = intermediate_size
+        self.num_experts_per_tok = num_experts_per_tok
+        self.num_local_experts = num_local_experts
         self.intermediate_size_mlp = intermediate_size_mlp
         self.num_attention_heads = num_attention_heads
         self.num_hidden_layers = num_hidden_layers

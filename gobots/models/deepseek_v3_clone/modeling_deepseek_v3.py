@@ -188,6 +188,7 @@ class DeepSeekV3Model(PreTrainedModel):
                         key_value_length=s,
                         document_ids=shifted_document_ids,
                     )
+                    mask = torch._dynamo.mark_dynamic(mask, index=0)
 
                 # shift the input positional ids:
                 if shifted_input_pos is not None:

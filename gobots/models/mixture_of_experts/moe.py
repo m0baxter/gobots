@@ -22,6 +22,8 @@ class MixtureOfExperts(nn.Module):
         self.intermediate_size = intermediate_size
         self.hidden_size = hidden_size
 
+        print(n_routed_experts, n_shared_experts, hidden_size, num_experts_per_token, intermediate_size)
+
         self.shared_experts = nn.ModuleList(
             [
                 SwiGLUFeedForward(
@@ -32,18 +34,28 @@ class MixtureOfExperts(nn.Module):
                 for _ in range(n_shared_experts)
             ]
         )
+        self.routed_experts = nn.ModuleList(
+            [
+                SwiGLUFeedForward(
+                    input_dim=hidden_size,
+                    intermediary_dim=intermediate_size,
+                    bias=False,
+                )
+                for _ in range(n_routed_experts)
+            ]
+        )
 
-        self.gate_up_proj = nn.Parameter(
-            torch.empty(
-                self.n_routed_experts, self.hidden_size, 2 * self.intermediate_size
-            )
-        )
-        self.gate_down_proj = nn.Parameter(
-            torch.empty(
-                (self.n_routed_experts, self.intermediate_size, self.hidden_size)
-            )
-        )
-        self.activation = nn.SiLU()
+        #self.gate_up_proj = nn.Parameter(
+        #    torch.empty(
+        #        self.n_routed_experts, self.hidden_size, 2 * self.intermediate_size
+        #    )
+        #)
+        #self.gate_down_proj = nn.Parameter(
+        #    torch.empty(
+        #        (self.n_routed_experts, self.intermediate_size, self.hidden_size)
+        #    )
+        #)
+        #self.activation = nn.SiLU()
 
         self.router = nn.Linear(hidden_size, n_routed_experts, bias=False)
         self.sigmoid = nn.Sigmoid()
@@ -51,6 +63,7 @@ class MixtureOfExperts(nn.Module):
         self.register_buffer("expert_bias", torch.zeros(n_routed_experts))
         self.expert_bias_update_rate = expert_bias_update_rate
 
+    @torch.compiler.disable(recursive=False)
     def forward(self, x):
         input_shape = x.shape
         shared_output = x
@@ -73,12 +86,12 @@ class MixtureOfExperts(nn.Module):
             -1, self.num_experts_per_token
         )  # (B*T, num_experts_per_token)
 
-        routed_output = torch.zeros_like(x)
-
+        routed_output = torch.zeros_like(flat_x)
+        expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
         auxiliary_loss = None
 
+        # calculate axiliary loss:
         if self.training:
-            # calculate axiliary loss:
             normalized_scores = router_logits / router_logits.sum(axis=1, keepdim=True)
 
             expert_prob = normalized_scores.mean(axis=1)
@@ -94,49 +107,23 @@ class MixtureOfExperts(nn.Module):
 
             auxiliary_loss = (expert_weighting * expert_prob).sum(axis=-1)
 
-            # set up variables for auxiliary-loss-free load balancing:
-            expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
+        for expert_idx in range(self.n_routed_experts):
 
-        for k in range(self.num_experts_per_token):
-            expert_idx = flat_selected_experts[
-                :, k
-            ]  # Indices of the k-th best expert for each token (B*T)
+            expert = self.routed_experts[expert_idx]
+            token_indices, weight_indices = torch.where(flat_selected_experts == expert_idx)
+            expert_weights = flat_router_weights[token_indices, weight_indices]
 
-            if self.training:
-                expert_load += torch.bincount(
-                    expert_idx, minlength=self.n_routed_experts
-                )
+            if token_indices.numel() > 0:
+                expert_input = flat_x[token_indices]
+                expert_output = expert(expert_input)
+                weighted_output = expert_output * expert_weights.unsqueeze(-1)
+                routed_output.index_add_(0, token_indices, weighted_output)
 
-            # Get weights for the selected experts
-            gate_up_w_k = self.gate_up_proj[
-                expert_idx
-            ]  # (B*T, d_model, 2 * expert_dim)
-            down_w_k = self.gate_down_proj[expert_idx]  # (B*T, expert_dim, d_model)
+                expert_load[expert_idx] = token_indices.numel()
 
-            # Perform expert calculations using bmm
-            # Input needs shape (B*T, 1, d_model) for bmm with (B*T, d_model, 2*expert_dim)
-            expert_input_k = flat_x.unsqueeze(1)  # (B*T, 1, d_model)
-            gate_up_out_k = torch.bmm(
-                expert_input_k, gate_up_w_k
-            )  # (B*T, 1, 2 * expert_dim)
+        routed_output = routed_output.view(input_shape)
 
-            # Split gate and up projections
-            gate_k, up_k = gate_up_out_k.chunk(2, dim=-1)  # Each (B*T, 1, expert_dim)
-
-            # Apply activation and gating
-            activated_up_k = self.activation(gate_k) * up_k  # (B*T, 1, expert_dim)
-
-            # Down projection
-            # Input needs shape (B*T, 1, expert_dim) for bmm with (B*T, expert_dim, d_model)
-            expert_output_k = torch.bmm(activated_up_k, down_w_k)  # (B*T, 1, d_model)
-            expert_output_k = expert_output_k.squeeze(1)  # (B*T, d_model)
-
-            # Weight the expert output
-            expert_output_weighted_k = expert_output_k * flat_router_weights[
-                :, k
-            ].unsqueeze(1)
-            routed_output = routed_output + expert_output_weighted_k.view(input_shape)
-
+        # perform auxiliary-loss free load balancing:
         if self.training:
             with torch.no_grad():
                 mean_load = expert_load.mean()
