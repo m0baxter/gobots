@@ -62,7 +62,7 @@ class GroupedQueryAttention(nn.Module):
             E_v, num_kv_groups * self.E_head, bias=attention_bias, **factory_kwargs
         )
 
-    @torch.compile(mode="max-autotune")
+    # @torch.compile(mode="max-autotune")
     def forward(
         self,
         query: torch.Tensor,
@@ -90,37 +90,43 @@ class GroupedQueryAttention(nn.Module):
             attn_output (torch.Tensor): output of shape (N, L_t, E_q)
         """
         # Step 1. Apply input projection
-        query = self.q_proj(query)
-        key = self.k_proj(key)
-        value = self.v_proj(value)
+        query_proj = self.q_proj(query)
+        key_proj = self.k_proj(key)
+        value_proj = self.v_proj(value)
 
         # Step 2. Split heads and prepare for SDPA
         # reshape query, key, value to separate by head
         # (N, L_t, E_total) -> (N, L_t, num_heads, E_head) -> (N, num_heads, L_t, E_head)
-        query = query.unflatten(-1, [self.num_heads, self.E_head]).transpose(1, 2)
+        query_proj = query_proj.unflatten(-1, [self.num_heads, self.E_head]).transpose(
+            1, 2
+        )
         # (N, L_s, E_total) -> (N, L_s, num_heads, E_head) -> (N, num_heads, L_s, E_head)
-        key = key.unflatten(-1, [self.num_kv_groups, self.E_head]).transpose(1, 2)
+        key_proj = key_proj.unflatten(-1, [self.num_kv_groups, self.E_head]).transpose(
+            1, 2
+        )
         # (N, L_s, E_total) -> (N, L_s, num_heads, E_head) -> (N, num_heads, L_s, E_head)
-        value = value.unflatten(-1, [self.num_kv_groups, self.E_head]).transpose(1, 2)
+        value_proj = value_proj.unflatten(
+            -1, [self.num_kv_groups, self.E_head]
+        ).transpose(1, 2)
 
         if self.q_norm:
-            query = self.q_norm(query)
-            key = self.q_norm(key)
+            query_proj = self.q_norm(query_proj)
+            key_proj = self.q_norm(key_proj)
 
         if pos_embedding:
-            query = pos_embedding(query.transpose(1, 2), input_pos=input_pos).transpose(
-                1, 2
-            )
-            key = pos_embedding(key.transpose(1, 2), input_pos=input_pos).transpose(
-                1, 2
-            )
+            query_proj = pos_embedding(
+                query_proj.transpose(1, 2), input_pos=input_pos
+            ).transpose(1, 2)
+            key_proj = pos_embedding(
+                key_proj.transpose(1, 2), input_pos=input_pos
+            ).transpose(1, 2)
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)
         attn_output = flex_attention(
-            query,
-            key,
-            value,
+            query_proj,
+            key_proj,
+            value_proj,
             block_mask=attn_mask,
             enable_gqa=True,
         )
@@ -129,6 +135,6 @@ class GroupedQueryAttention(nn.Module):
 
         # Step 4. Apply output projection
         # (N, L_t, E_total) -> (N, L_t, E_out)
-        attn_output = self.out_proj(attn_output)
+        attn_output_proj = self.out_proj(attn_output)
 
-        return attn_output
+        return attn_output_proj

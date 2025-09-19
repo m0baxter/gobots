@@ -9,7 +9,7 @@ class MTPTrainer(Trainer):
         auxiliary_loss_weight: float = 1e-4,
         mtp_weight: float = 0.01,
         mtp_depth: int = 1,
-        ignore_index: int = 0,
+        ignore_index: int = -100,
         *args,
         **kwargs,
     ):
@@ -18,16 +18,27 @@ class MTPTrainer(Trainer):
         self.mtp_weight = mtp_weight
         self.mtp_depth = mtp_depth
         self.auxiliary_loss_weight = auxiliary_loss_weight
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=1)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
-    def compute_loss(self, model, inputs, return_outputs: bool = False):
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch: torch.Tensor | None = None,
+    ):
+        torch.compiler.cudagraph_mark_step_begin()
         _, s = inputs["input_ids"][:, : -(1 + self.mtp_depth)].shape
 
-        outputs = model(x=inputs["input_ids"][:, : -(1 + self.mtp_depth)])
+        outputs = model(
+            input_ids=inputs["input_ids"][:, : -(1 + self.mtp_depth)],
+            document_ids=inputs["document_ids"][:, : -(1 + self.mtp_depth)],
+            input_pos=inputs["input_pos"][:, : -(1 + self.mtp_depth)],
+        )
         logits, mtp_logits, auxiliary_losses = (
             outputs["logits"],
-            outputs["mtp_logits"],
-            outputs["auxiliary_losses"],
+            outputs.get("mtp_logits", []),
+            outputs.get("auxiliary_losses", []),
         )
         main_loss = self.loss_fn(
             logits.view(-1, logits.size(-1)),
@@ -52,4 +63,14 @@ class MTPTrainer(Trainer):
         mtp_loss *= self.mtp_weight / self.mtp_depth
         total_loss = main_loss + mtp_loss + auxiliary_loss
 
-        return (total_loss, (logits, mtp_logits)) if return_outputs else total_loss
+        if return_outputs:
+            output = {
+                "mtp_loss": mtp_loss,
+                "auxiliary_loss": auxiliary_loss,
+                "logits": logits,
+                "mtp_logits": mtp_logits,
+            }
+
+            return total_loss, output
+
+        return total_loss

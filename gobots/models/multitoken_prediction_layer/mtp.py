@@ -28,11 +28,11 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
 
         # Combine previous hidden state with future token embedding
         self.combine_proj = nn.Linear(
-            2 * config.hidden_dim, config.hidden_dim, bias=config.attention_bias
+            2 * config.hidden_size, config.hidden_size, bias=config.attention_bias
         )
 
-        self.norm1 = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.norm2 = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
+        self.norm1 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm2 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.attention = _attention_mechanisms[config.mtp_config["attention_type"]](
             **config.mtp_config
@@ -42,8 +42,8 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
             **config.mtp_config
         )
 
-        self.attn_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.mlp_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
+        self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.mlp_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,

@@ -22,8 +22,6 @@ class MixtureOfExperts(nn.Module):
         self.intermediate_size = intermediate_size
         self.hidden_size = hidden_size
 
-        print(n_routed_experts, n_shared_experts, hidden_size, num_experts_per_token, intermediate_size)
-
         self.shared_experts = nn.ModuleList(
             [
                 SwiGLUFeedForward(
@@ -45,18 +43,6 @@ class MixtureOfExperts(nn.Module):
             ]
         )
 
-        #self.gate_up_proj = nn.Parameter(
-        #    torch.empty(
-        #        self.n_routed_experts, self.hidden_size, 2 * self.intermediate_size
-        #    )
-        #)
-        #self.gate_down_proj = nn.Parameter(
-        #    torch.empty(
-        #        (self.n_routed_experts, self.intermediate_size, self.hidden_size)
-        #    )
-        #)
-        #self.activation = nn.SiLU()
-
         self.router = nn.Linear(hidden_size, n_routed_experts, bias=False)
         self.sigmoid = nn.Sigmoid()
 
@@ -64,7 +50,7 @@ class MixtureOfExperts(nn.Module):
         self.expert_bias_update_rate = expert_bias_update_rate
 
     @torch.compiler.disable(recursive=False)
-    def forward(self, x):
+    def forward(self, x, calculate_auxiliary_loss: bool = True):
         input_shape = x.shape
         shared_output = x
 
@@ -76,7 +62,7 @@ class MixtureOfExperts(nn.Module):
             router_logits + self.expert_bias, self.num_experts_per_token, dim=-1
         )
         routing_weights = router_logits.gather(2, selected_experts)
-        routing_weights = F.softmax(routing_weights, dim=-1)
+        routing_weights = F.softmax(routing_weights, dim=-1).to(dtype=x.dtype)
 
         flat_x = x.view(-1, self.hidden_size)  # (B*T, d_hidden_size)
         flat_router_weights = routing_weights.view(
@@ -91,26 +77,20 @@ class MixtureOfExperts(nn.Module):
         auxiliary_loss = None
 
         # calculate axiliary loss:
-        if self.training:
-            normalized_scores = router_logits / router_logits.sum(axis=1, keepdim=True)
-
-            expert_prob = normalized_scores.mean(axis=1)
+        if calculate_auxiliary_loss:
+            avg_expert_prob = router_logits.mean(axis=1)
 
             indicator = torch.zeros_like(router_logits)
             indicator.scatter_(2, selected_experts, 1)
+            expert_fraction = indicator.sum(dim=1) / input_shape[1]
 
-            expert_weighting = (
-                indicator.sum(dim=1)
-                * self.n_routed_experts
-                / (self.num_experts_per_token * input_shape[1])
-            )
-
-            auxiliary_loss = (expert_weighting * expert_prob).sum(axis=-1)
+            auxiliary_loss = (expert_fraction * avg_expert_prob).sum(axis=-1)
 
         for expert_idx in range(self.n_routed_experts):
-
             expert = self.routed_experts[expert_idx]
-            token_indices, weight_indices = torch.where(flat_selected_experts == expert_idx)
+            token_indices, weight_indices = torch.where(
+                flat_selected_experts == expert_idx
+            )
             expert_weights = flat_router_weights[token_indices, weight_indices]
 
             if token_indices.numel() > 0:

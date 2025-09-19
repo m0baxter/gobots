@@ -1,37 +1,38 @@
+import math
 import torch
 import torch.nn as nn
 from transformers import GradientCheckpointingLayer, PreTrainedModel
 from torchtune.modules import RotaryPositionalEmbeddings
-from ..attention_mechanisms import MultiHeadLatentAttention
+from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
 from ..mask_utils import generate_block_mask
 from ..mixture_of_experts import MixtureOfExperts
 from ..multitoken_prediction_layer import MultiTokenPredictionHead
-from .configuration_deepseek_v3 import DeepSeekV3Config
+from .configuration_bagl import BaGLConfig
 
 
-class DeepSeekV3Block(GradientCheckpointingLayer):
-    def __init__(self, config: DeepSeekV3Config, index: int):
+class BaGLBlock(GradientCheckpointingLayer):
+    def __init__(self, config: BaGLConfig, is_dense: bool):
         super().__init__()
-        self.dense_layer = index < config.first_k_dense_replace
+        self.is_dense = is_dense
         self.input_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.attention = MultiHeadLatentAttention(
-            d_model=config.hidden_size,
+        self.attention = GroupedQueryAttention(
+            E_q=config.hidden_size,
+            E_k=config.hidden_size,
+            E_v=config.hidden_size,
+            E_total=config.hidden_size,
             num_heads=config.num_attention_heads,
-            v_head_dim=config.v_head_dim,
-            q_lora_rank=config.q_lora_rank,
-            kv_lora_rank=config.kv_lora_rank,
-            qk_rope_head_dim=config.qk_rope_head_dim,
-            qk_nope_head_dim=config.qk_nope_head_dim,
+            num_kv_groups=config.num_key_value_heads,
+            rms_norm_eps=config.rms_norm_eps,
             dropout=config.attention_dropout,
             attention_bias=config.attention_bias,
+            qk_norm=config.use_qk_norm,
         )
         self.mid_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
-        if self.dense_layer:
+        if self.is_dense:
             self.feedforward = SwiGLUFeedForward(
                 input_dim=config.hidden_size,
-                intermediary_dim=config.intermediate_dim,
+                intermediary_dim=config.intermediate_size_mlp,
                 bias=config.mlp_bias,
             )
 
@@ -40,7 +41,7 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
                 n_shared_experts=config.n_shared_experts,
                 n_routed_experts=config.n_routed_experts,
                 hidden_size=config.hidden_size,
-                intermediate_size=config.moe_intermediate_size,
+                intermediate_size=config.intermediate_size,
                 num_experts_per_token=config.num_experts_per_tok,
             )
 
@@ -48,6 +49,8 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
         skip = x
         x = self.input_norm(x)
         attention_score = self.attention(
+            x,
+            x,
             x,
             mask,
             pos_embedding,
@@ -58,10 +61,9 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
         skip = x
 
         x = self.mid_norm(x)
-
         auxiliary_losses = None
 
-        if self.dense_layer:
+        if self.is_dense:
             x = self.feedforward(x)
 
         else:
@@ -72,7 +74,7 @@ class DeepSeekV3Block(GradientCheckpointingLayer):
         return x, auxiliary_losses
 
 
-class DeepSeekV3Model(PreTrainedModel):
+class BaGLModel(PreTrainedModel):
     _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
     supports_gradient_checkpointing = True
 
@@ -94,10 +96,13 @@ class DeepSeekV3Model(PreTrainedModel):
         elif isinstance(module, nn.RMSNorm):
             module.weight.data.fill_(1.0)
 
-    def __init__(self, config: DeepSeekV3Config):
+    def __init__(self, config: BaGLConfig):
         super().__init__(config)
 
         self.config = config
+        self.hidden_size = config.hidden_size
+        self.nope_layers = set(config.nope_layers)
+        self.dense_layers = set(config.dense_layers)
         self.pad_token_id = config.pad_token_id
         self.num_nextn_predict_layers = config.num_nextn_predict_layers
 
@@ -107,12 +112,12 @@ class DeepSeekV3Model(PreTrainedModel):
 
         self.transformer_blocks = nn.ModuleList(
             [
-                DeepSeekV3Block(config, index)
-                for index in range(config.num_hidden_layers)
+                BaGLBlock(config, is_dense=idx in self.dense_layers)
+                for idx in range(config.num_hidden_layers)
             ]
         )
         self.rope = RotaryPositionalEmbeddings(
-            dim=config.qk_rope_head_dim,
+            dim=config.hidden_size // config.num_attention_heads,
             max_seq_len=config.max_position_embeddings,
             base=config.rope_base,
         )
@@ -136,10 +141,11 @@ class DeepSeekV3Model(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, x, mask=None, document_ids=None, input_pos=None):
-        b, s = x.shape
-        input_ids = x
-        x = self.embedding_layer(x)
+    def forward(
+        self, input_ids, mask=None, document_ids=None, input_pos=None, labels=None
+    ):
+        b, s = input_ids.shape
+        x = self.embedding_layer(input_ids) * math.sqrt(self.hidden_size)
         auxiliary_losses = []
 
         if mask is None:
@@ -150,8 +156,9 @@ class DeepSeekV3Model(PreTrainedModel):
                 document_ids=document_ids,
             )
 
-        for block in self.transformer_blocks:
-            x, aux_loss = block(x, mask, self.rope, input_pos)
+        for i, block in enumerate(self.transformer_blocks):
+            pos_embed = None if i in self.nope_layers else self.rope
+            x, aux_loss = block(x, mask, pos_embed, input_pos)
 
             if aux_loss is not None:
                 auxiliary_losses.append(aux_loss)
@@ -159,11 +166,10 @@ class DeepSeekV3Model(PreTrainedModel):
         x = self.final_norm(x)
         logits = self.lm_head(x)
 
-        mtp_logits = None
+        mtp_logits = []
 
         if self.num_nextn_predict_layers > 0:
             b, s, d = x.shape
-            mtp_logits = []
 
             current_input_ids = input_ids
             current_hidden = x
@@ -203,7 +209,9 @@ class DeepSeekV3Model(PreTrainedModel):
                 )[:, 1:]
 
                 # apply mpt head
-                embeds = self.embedding_layer(current_input_ids)
+                embeds = self.embedding_layer(current_input_ids) * math.sqrt(
+                    self.hidden_size
+                )
                 current_hidden, aux_loss = mtp_head(
                     current_hidden,
                     embeds,
@@ -216,7 +224,7 @@ class DeepSeekV3Model(PreTrainedModel):
                     auxiliary_losses.append(aux_loss)
 
                 # add new logit to output
-                current_logits = self.lm_head(current_hidden)
+                current_logits = self.lm_head(self.final_norm(current_hidden))
                 mtp_logits.append(current_logits)
 
         return {

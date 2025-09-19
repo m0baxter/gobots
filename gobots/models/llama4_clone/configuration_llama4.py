@@ -8,7 +8,7 @@ class Llama4Config(PretrainedConfig):
           Vocabulary size for the model.
         pad_token_id (`int | None` defaults to None):
           id of the padding token.
-        hidden_dim: (`int`, *optional* default to 2048)
+        hidden_size: (`int`, *optional* default to 2048)
           The embedding dimension for tokens.
        intermediate_dim (`int` *optional* defaults to 8192):
           dimension of the feedforward MOE layers
@@ -50,7 +50,7 @@ class Llama4Config(PretrainedConfig):
         self,
         vocab_size: int = 32000,
         pad_token_id: int | None = None,
-        hidden_dim: int = 2048,
+        hidden_size: int = 2048,
         interleave_moe_layer_step: int = 1,
         intermediate_size: int = 8192,
         intermediate_size_mlp: int = 16384,
@@ -74,7 +74,7 @@ class Llama4Config(PretrainedConfig):
             pad_token_id=pad_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
         )
         self.vocab_size = vocab_size
-        self.hidden_dim = hidden_dim
+        self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.num_experts_per_tok = num_experts_per_tok
         self.num_local_experts = num_local_experts
