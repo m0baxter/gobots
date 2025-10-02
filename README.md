@@ -28,6 +28,8 @@ The GoBots to Hugging Face's Transformers
   - [Feedforward Network](#feedforward-network)
     - [Dense](#dense)
     - [Mixture of Experts](#mixture-of-experts)
+      - [MOE stability](#moe-stability)
+  - [Multi-Token Prediction](#multi-token-prediction)
 - [LLM Architectures](#llm-architectures)
   - [Dense architectures](#dense-architectures)
     - [Llama 3](#llama-3)
@@ -434,6 +436,76 @@ s_{i,t} & s_{i,t} + b_i\in \mathrm{TopK}(\{s_{i,t} + b_i \mid 1 \leq j \leq N_r 
 $$
 
 At training time the biases are initialized to zero and updated by adding or subtracting a small value depending on whether the given expert is over or under loaded.
+
+##### MOE stability
+
+Mixture of experts layers are notoriously difficult to train. Much of this stems from the exponentials used (softmax or sigmoid) when calculating the router weights. Several solutions have been proposed to alleviate the problem of numerical instability
+
+1. By forcing the model to do all of the routing calculations in full precision (32-bit float) overflow and underflow issues can be reduced.
+2. The addition of an extra loss term which is designed to keep the exponentials of router logits (which are used when calculating the routing weights) low. This loss is usually referred to as the z-loss and is given by
+$$
+L_z = \frac{1}{C} \sum\limits_{x \in X} \left( \log{\sum\limits_{i=1}^{N_r} \exp{(\mathrm{TopK\left[x \cdot W_g\right]_i})}}\right)
+$$
+for a batch $X$ of $C$ tokens $x$ and router weights $W_g$
+
+3. Careful weight initialization can help maintain stability. Typically, the weights are initialized by sampling from a normal distribution with mean $\mu=0$ and standard deviation given my some scale factor. In the original switch transformer [paper](https://arxiv.org/abs/2101.03961) the authors suggest drawing weights from a truncate normal distribution with standard deviation $\sigma = \sqrt{s / d_{in}}$ where $s$ is a scale factor (the authors suggest $s=0.1$) and $d_{in}$ is the input dimension of the weight matrix being initialized.
+
+### Multi-Token Prediction
+
+A standard causal language model takes as input a sequence of tokens $t_1, \dots t_n$ and outputs the probability distribution of the token $t_{n+1}$
+given the preceeding ones. Multi-token prediction (MTP) embues the model with the ability to predict not just the next token but the next $k$ tokens.
+MTP provides several benefits. First, it can be used to speed up inference via speculative decoding. second it provides additional loss signals while training which are purported to improve results (see [here](https://arxiv.org/abs/2412.19437v2)).
+
+Below is a schematic of the MTP head architecture used in DeepSeek V3:
+
+```mermaid
+ flowchart BT
+   subgraph input_sequence[input sequence]
+      t1
+      t2
+      t3
+      dots1[...]
+      tn
+   end
+   input_sequence --> embed[Embedding layer]--> embeds1
+   subgraph embeds1[ebedded tokens]
+      e1
+      e2
+      e3
+      dots3[...]
+      en
+   end 
+   embeds1 --> llm[Transformer stack] --> hidden_state1
+   subgraph hidden_state1[final hidden states]
+      h1
+      h2
+      h3
+      dots2[...]
+      hn
+   end
+    hn --> lm_head[LM head] -- argmax --> tnp1["t(n + 1)"] --> embed2[embeddingg layer] --> enp1
+   subgraph embeds2[ebedded tokens]
+      direction LR %%
+      ee2[e2] ~~~ ee3[e3] ~~~ ee4[e4] ~~~ dots4[...] ~~~ enp1["e(n+1)"]
+   end 
+    hidden_state1 --> norm1
+    embeds2 --> norm2
+   subgraph mtp_head[MTP Head]
+      norm1[RMSNorm] --> concatenate
+      norm2[RMSNorm] --> concatenate
+      concatenate --> proj[linea layer] --> block[transformer block]
+
+   end
+   block --> lm_head2[LM head] --> out_tokens
+   subgraph out_tokens[output sequence]
+      tt3[t3]
+      tt4[t4]
+      tt5[t5]
+      dots5[...]
+      tnp2["t(n+2)"]
+   end
+style mtp_head fill: lightblue
+```
 
 ## LLM Architectures
 
