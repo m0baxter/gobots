@@ -443,12 +443,14 @@ Mixture of experts layers are notoriously difficult to train. Much of this stems
 
 1. By forcing the model to do all of the routing calculations in full precision (32-bit float) overflow and underflow issues can be reduced.
 2. The addition of an extra loss term which is designed to keep the exponentials of router logits (which are used when calculating the routing weights) low. This loss is usually referred to as the z-loss and is given by
+
 $$
 L_z = \frac{1}{C} \sum\limits_{x \in X} \left( \log{\sum\limits_{i=1}^{N_r} \exp{(\mathrm{TopK\left[x \cdot W_g\right]_i})}}\right)
 $$
+
 for a batch $X$ of $C$ tokens $x$ and router weights $W_g$
 
-3. Careful weight initialization can help maintain stability. Typically, the weights are initialized by sampling from a normal distribution with mean $\mu=0$ and standard deviation given my some scale factor. In the original switch transformer [paper](https://arxiv.org/abs/2101.03961) the authors suggest drawing weights from a truncate normal distribution with standard deviation $\sigma = \sqrt{s / d_{in}}$ where $s$ is a scale factor (the authors suggest $s=0.1$) and $d_{in}$ is the input dimension of the weight matrix being initialized.
+4. Careful weight initialization can help maintain stability. Typically, the weights are initialized by sampling from a normal distribution with mean $\mu=0$ and standard deviation given my some scale factor. In the original switch transformer [paper](https://arxiv.org/abs/2101.03961) the authors suggest drawing weights from a truncate normal distribution with standard deviation $\sigma = \sqrt{s / d_{in}}$ where $s$ is a scale factor (the authors suggest $s=0.1$) and $d_{in}$ is the input dimension of the weight matrix being initialized.
 
 ### Multi-Token Prediction
 
