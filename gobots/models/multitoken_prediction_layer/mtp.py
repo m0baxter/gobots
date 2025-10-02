@@ -79,12 +79,13 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
             )
 
         auxiliary_losses = None
+        z_loss = None
 
         if self.feedforward_type == "moe":
-            output, auxiliary_losses = self.feedforward(self.mlp_norm(hidden))
+            output, auxiliary_losses, z_loss = self.feedforward(self.mlp_norm(hidden))
             hidden = hidden + output
 
         else:
             hidden = hidden + self.feedforward(self.mlp_norm(hidden))
 
-        return hidden, auxiliary_losses
+        return hidden, auxiliary_losses, z_loss

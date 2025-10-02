@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from ..feedforward_layers import SwiGLUFeedForward
 
 
@@ -51,40 +50,53 @@ class MixtureOfExperts(nn.Module):
 
     @torch.compiler.disable(recursive=False)
     def forward(self, x, calculate_auxiliary_loss: bool = True):
+        device_type = "cuda" if torch.cuda.is_available() else "cpu"
         input_shape = x.shape
         shared_output = x
 
         for shared_expert in self.shared_experts:
             shared_output = shared_output + shared_expert(shared_output)
 
-        router_logits = self.sigmoid(self.router(x))
-        _, selected_experts = torch.topk(
-            router_logits + self.expert_bias, self.num_experts_per_token, dim=-1
-        )
-        routing_weights = router_logits.gather(2, selected_experts)
-        routing_weights = F.softmax(routing_weights, dim=-1).to(dtype=x.dtype)
+        with torch.autocast(device_type=device_type, enabled=False):
+            pre_sigmoid = self.router(x.to(dtype=torch.float32))
+            router_logits = self.sigmoid(pre_sigmoid)
 
-        flat_x = x.view(-1, self.hidden_size)  # (B*T, d_hidden_size)
-        flat_router_weights = routing_weights.view(
-            -1, self.num_experts_per_token
-        )  # (B*T, num_experts_per_token)
-        flat_selected_experts = selected_experts.view(
-            -1, self.num_experts_per_token
-        )  # (B*T, num_experts_per_token)
+            _, selected_experts = torch.topk(
+                router_logits + self.expert_bias, self.num_experts_per_token, dim=-1
+            )
 
-        routed_output = torch.zeros_like(flat_x)
-        expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
-        auxiliary_loss = None
+            # z-loss:
+            z_loss = (
+                torch.logsumexp(pre_sigmoid.gather(2, selected_experts), dim=-1) ** 2.0
+            )
+            z_loss = torch.mean(z_loss)
 
-        # calculate axiliary loss:
-        if calculate_auxiliary_loss:
-            avg_expert_prob = router_logits.mean(axis=1)
+            routing_weights = router_logits.gather(2, selected_experts)
+            routing_weights = routing_weights / routing_weights.sum(
+                dim=-1, keepdim=True
+            )
 
-            indicator = torch.zeros_like(router_logits)
-            indicator.scatter_(2, selected_experts, 1)
-            expert_fraction = indicator.sum(dim=1) / input_shape[1]
+            flat_x = x.view(-1, self.hidden_size)  # (B*T, d_hidden_size)
+            flat_router_weights = routing_weights.view(
+                -1, self.num_experts_per_token
+            )  # (B*T, num_experts_per_token)
+            flat_selected_experts = selected_experts.view(
+                -1, self.num_experts_per_token
+            )  # (B*T, num_experts_per_token)
 
-            auxiliary_loss = (expert_fraction * avg_expert_prob).sum(axis=-1)
+            routed_output = torch.zeros_like(flat_x)
+            expert_load = torch.zeros(self.n_routed_experts).to(self.expert_bias.device)
+            auxiliary_loss = None
+
+            # calculate axiliary loss:
+            if calculate_auxiliary_loss:
+                avg_expert_prob = router_logits.mean(axis=1)
+
+                indicator = torch.zeros_like(router_logits)
+                indicator.scatter_(2, selected_experts, 1)
+                expert_fraction = indicator.sum(dim=1) / input_shape[1]
+
+                auxiliary_loss = (expert_fraction * avg_expert_prob).sum(axis=-1)
 
         for expert_idx in range(self.n_routed_experts):
             expert = self.routed_experts[expert_idx]
@@ -97,7 +109,9 @@ class MixtureOfExperts(nn.Module):
                 expert_input = flat_x[token_indices]
                 expert_output = expert(expert_input)
                 weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                routed_output.index_add_(0, token_indices, weighted_output)
+                routed_output.index_add_(
+                    0, token_indices, weighted_output.to(dtype=routed_output.dtype)
+                )
 
                 expert_load[expert_idx] = token_indices.numel()
 
@@ -111,4 +125,4 @@ class MixtureOfExperts(nn.Module):
                     mean_load - expert_load
                 )
 
-        return x + shared_output + routed_output, auxiliary_loss
+        return x + shared_output + routed_output, auxiliary_loss, z_loss

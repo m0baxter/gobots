@@ -1,4 +1,3 @@
-import math
 import torch
 import torch.nn as nn
 from transformers import GradientCheckpointingLayer, PreTrainedModel
@@ -62,16 +61,17 @@ class BaGLBlock(GradientCheckpointingLayer):
 
         x = self.mid_norm(x)
         auxiliary_losses = None
+        z_loss = None
 
         if self.is_dense:
             x = self.feedforward(x)
 
         else:
-            x, auxiliary_losses = self.feedforward(x)
+            x, auxiliary_losses, z_loss = self.feedforward(x)
 
         x = skip + x
 
-        return x, auxiliary_losses
+        return x, auxiliary_losses, z_loss
 
 
 class BaGLModel(PreTrainedModel):
@@ -79,15 +79,19 @@ class BaGLModel(PreTrainedModel):
     supports_gradient_checkpointing = True
 
     def _init_weights(self, module):
-        std = self.config.initializer_range
-
         if isinstance(module, nn.Linear):
+            w_fan_in = module.weight.shape[-1]
+            std = torch.math.sqrt(self.config.initializer_range / w_fan_in)
+
             module.weight.data.normal_(mean=0.0, std=std)
+            module.weight.data.clamp_(min=-2 * std, max=2 * std)
 
             if module.bias is not None:
                 module.bias.data.zero_()
 
         elif isinstance(module, nn.Embedding):
+            w_fan_in = module.weight.shape[-1]
+            std = torch.math.sqrt(self.config.initializer_range / w_fan_in)
             module.weight.data.normal_(mean=0.0, std=std)
 
             if module.padding_idx is not None:
@@ -122,6 +126,7 @@ class BaGLModel(PreTrainedModel):
             base=config.rope_base,
         )
 
+        self.embed_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.final_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -145,8 +150,9 @@ class BaGLModel(PreTrainedModel):
         self, input_ids, mask=None, document_ids=None, input_pos=None, labels=None
     ):
         b, s = input_ids.shape
-        x = self.embedding_layer(input_ids) * math.sqrt(self.hidden_size)
+        x = self.embed_norm(self.embedding_layer(input_ids))
         auxiliary_losses = []
+        z_losses = []
 
         if mask is None:
             mask = generate_block_mask(
@@ -158,10 +164,13 @@ class BaGLModel(PreTrainedModel):
 
         for i, block in enumerate(self.transformer_blocks):
             pos_embed = None if i in self.nope_layers else self.rope
-            x, aux_loss = block(x, mask, pos_embed, input_pos)
+            x, aux_loss, z_loss = block(x, mask, pos_embed, input_pos)
 
             if aux_loss is not None:
                 auxiliary_losses.append(aux_loss)
+
+            if z_loss is not None:
+                z_losses.append(z_loss)
 
         x = self.final_norm(x)
         logits = self.lm_head(x)
@@ -209,10 +218,8 @@ class BaGLModel(PreTrainedModel):
                 )[:, 1:]
 
                 # apply mpt head
-                embeds = self.embedding_layer(current_input_ids) * math.sqrt(
-                    self.hidden_size
-                )
-                current_hidden, aux_loss = mtp_head(
+                embeds = self.embed_norm(self.embedding_layer(current_input_ids))
+                current_hidden, aux_loss, z_loss = mtp_head(
                     current_hidden,
                     embeds,
                     mask,
@@ -223,6 +230,9 @@ class BaGLModel(PreTrainedModel):
                 if aux_loss is not None:
                     auxiliary_losses.append(aux_loss)
 
+                if z_loss is not None:
+                    z_losses.append(z_loss)
+
                 # add new logit to output
                 current_logits = self.lm_head(self.final_norm(current_hidden))
                 mtp_logits.append(current_logits)
@@ -231,4 +241,5 @@ class BaGLModel(PreTrainedModel):
             "logits": logits,
             "mtp_logits": mtp_logits,
             "auxiliary_losses": auxiliary_losses,
+            "z_losses": z_losses,
         }
