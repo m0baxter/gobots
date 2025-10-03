@@ -508,6 +508,16 @@ Below is a schematic of the MTP head architecture used in DeepSeek V3:
    end
 style mtp_head fill: lightblue
 ```
+Several MPT heads can be chained to predict additional tokens. The input to the dth MTP is the hidden states of the previous layer and the embeddings of the dth through n+d tokens from the input sequence. New tokens are determined by taking the argmax of the result of applying the
+LLM output head to the final token in the current sequence.
+
+The MTP loss is given by
+
+$$
+L_\mathrm{MTP} = \frac{\lambda}{D} \sum^D_{d=1} \mathrm{CrossEntropy} ( [P^d_{2 + k}, P^d_{3 + k}, \dots P^d_{T + k + 1}], [t_{2 + k}, t_{3 + k}, \dots t_{T + k + 1}] )
+$$
+
+where $P^d_i$ is the probability distribution for the ith token output by the dth MTP head, $t_j$ is the jth input token id, $D$ is the number of MTP heads, and $\lambda$ is a scaling constant applied to the loss.
 
 ## LLM Architectures
 
