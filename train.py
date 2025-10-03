@@ -17,13 +17,19 @@ if __name__ == "__main__":
         loss_accumlator.update(mtp_loss, auxiliary_loss, z_loss, logits.shape[0])
 
         if compute_result:
-            total_mtp_loss, total_auxiliary_loss, total_z_loss = loss_accumlator.compute()
+            total_mtp_loss, total_auxiliary_loss, total_z_loss = (
+                loss_accumlator.compute()
+            )
 
-            return {"mtp_loss": total_mtp_loss, "auxiliary_loss": total_auxiliary_loss, "z_loss": total_z_loss}
+            return {
+                "mtp_loss": total_mtp_loss,
+                "auxiliary_loss": total_auxiliary_loss,
+                "z_loss": total_z_loss,
+            }
 
         return
 
-    login(token="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")
+    login(token="TOKEN GOES HERE")
     device = device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     config, tokenizer, model = build_bagl_qmb()
@@ -42,7 +48,7 @@ if __name__ == "__main__":
     document_count = len(dataset)
     train_size = int(document_count)
     val_size = int(train_size * 0.1)
-    sequence_length = 1536
+    sequence_length = 2048
     context_length = sequence_length + config.num_nextn_predict_layers + 1
 
     print(document_count, val_size, train_size)
@@ -66,7 +72,7 @@ if __name__ == "__main__":
         tokenize_fn,
         batched=True,
         remove_columns=dataset.column_names,
-    ).take(35000 * 5 * 25)
+    ).take(35000 * 8 * 4)
 
     print(dataset)
     print("document count:", document_count)
@@ -75,14 +81,14 @@ if __name__ == "__main__":
         disable_tqdm=True,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
-        per_device_train_batch_size=5,
-        gradient_accumulation_steps=25,
-        per_device_eval_batch_size=5,
+        per_device_train_batch_size=8,
+        gradient_accumulation_steps=4,
+        per_device_eval_batch_size=8,
         max_steps=35000,
-        #eval_strategy="no",
-        eval_strategy="steps",
-        eval_steps=5000,
-        #save_strategy="no",
+        eval_strategy="no",
+        # eval_strategy="steps",
+        # eval_steps=5000,
+        # save_strategy="no",
         save_strategy="steps",
         save_steps=5000,
         logging_strategy="steps",
@@ -92,15 +98,16 @@ if __name__ == "__main__":
         bf16=True,
         bf16_full_eval=True,
         optim="adamw_torch",
-        learning_rate=1.0e-05,
+        learning_rate=1.0e-04,
         gradient_checkpointing=True,
         dataloader_num_workers=4,
         batch_eval_metrics=True,
         include_num_input_tokens_seen=True,
         max_grad_norm=1.0,
         weight_decay=0.01,
-        run_name="bagl_10",
+        run_name="bagl_03",
         report_to="trackio",
+        torch_empty_cache_steps=5000,
     )
 
     trainer = MTPTrainer(

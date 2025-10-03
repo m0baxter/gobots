@@ -6,7 +6,11 @@ class LossAccumulator:
         self.running_z_loss = 0
 
     def update(
-            self, batch_mtp_loss: float, batch_axiliary_loss: float, batch_z_loss: float, batch_size: int
+        self,
+        batch_mtp_loss: float,
+        batch_axiliary_loss: float,
+        batch_z_loss: float,
+        batch_size: int,
     ):
         self.num_examples += batch_size
         self.running_mtp_loss += batch_mtp_loss * batch_size
