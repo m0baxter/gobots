@@ -73,6 +73,7 @@ class MTPTrainer(Trainer):
 
         if return_outputs:
             output = {
+                "total_loss": total_loss,
                 "mtp_loss": mtp_loss,
                 "auxiliary_loss": auxiliary_loss,
                 "z_loss": z_loss,

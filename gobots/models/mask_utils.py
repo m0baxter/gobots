@@ -1,4 +1,3 @@
-# import torch
 from functools import partial
 from torch.nn.attention.flex_attention import create_block_mask, and_masks
 
@@ -11,7 +10,6 @@ def document_masking_fn(b, h, q_idx, kv_idx, document_ids):
     return document_ids[b][q_idx] == document_ids[b][kv_idx]
 
 
-# @torch.compile()
 def create_causal_mask(
     batch_size: int | None = None,
     num_heads: int | None = None,
@@ -24,10 +22,10 @@ def create_causal_mask(
         H=num_heads,
         Q_LEN=query_length,
         KV_LEN=key_value_length,
+        _compile=True,
     )
 
 
-# @torch.compile()
 def create_causal_document_mask(
     batch_size: int | None = None,
     num_heads: int | None = None,
@@ -45,6 +43,7 @@ def create_causal_document_mask(
         H=num_heads,
         Q_LEN=query_length,
         KV_LEN=key_value_length,
+        _compile=True,
     )
 
 

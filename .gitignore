@@ -209,4 +209,5 @@ __marimo__/
 
 *.swo
 *.swp
-.DS_STORE
+.DS_Store
+*.out

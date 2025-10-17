@@ -23,8 +23,8 @@ _feedforward_layers = {
 class MultiTokenPredictionHead(GradientCheckpointingLayer):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
-        self.feedforward_type = config.mtp_config["feedforward_type"]
-        self.attention_type = config.mtp_config["attention_type"]
+        self.feedforward_type = config.feedforward_type
+        self.attention_type = config.attention_type
 
         # Combine previous hidden state with future token embedding
         self.combine_proj = nn.Linear(
@@ -34,12 +34,10 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
         self.norm1 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.norm2 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        self.attention = _attention_mechanisms[config.mtp_config["attention_type"]](
-            **config.mtp_config
-        )
+        self.attention = _attention_mechanisms[self.attention_type](**config.to_dict())
 
-        self.feedforward = _feedforward_layers[config.mtp_config["feedforward_type"]](
-            **config.mtp_config
+        self.feedforward = _feedforward_layers[self.feedforward_type](
+            **config.to_dict()
         )
 
         self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)

@@ -1,5 +1,82 @@
 from transformers import PretrainedConfig
-from typing import Any
+
+
+class BaGLMTPConfig(PretrainedConfig):
+    model_type = "bagl_mpt"
+
+    def __init__(
+        self,
+        tie_word_embeddings: bool = False,
+        vocab_size: int = 32000,
+        pad_token_id: int | None = None,
+        bos_token_id: int | None = None,
+        eos_token_id: int | None = None,
+        attention_type: str = "grouped_query_attention",
+        feedforward_type: str = "dense",
+        E_k: int | None = None,
+        E_q: int | None = None,
+        E_total: int | None = None,
+        E_v: int | None = None,
+        attention_bias: bool = False,
+        bias: bool | None = None,
+        d_model: int | None = None,
+        dropout: float = 0.0,
+        hidden_size: int | None = None,
+        input_dim: int | None = None,
+        intermediary_dim: int | None = None,
+        intermediate_size: int | None = None,
+        kv_lora_rank: int | None = None,
+        n_routed_experts: int | None = None,
+        n_shared_experts: int | None = None,
+        num_experts_per_token: int | None = None,
+        num_heads: int | None = None,
+        num_kv_groups: int | None = None,
+        q_lora_rank: int | None = None,
+        qk_nope_head_dim: int | None = None,
+        qk_norm: bool | None = None,
+        qk_rope_head_dim: int | None = None,
+        rms_norm_eps: float = 1e-06,
+        v_head_dim: int | None = None,
+        num_nextn_predict_layers: int = 1,
+        initializer_range: float = 0.1,
+        **kwargs,
+    ):
+        super().__init__(
+            pad_token_id=pad_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            **kwargs,
+        )
+        self.vocab_size = vocab_size
+        self.attention_type = attention_type
+        self.feedforward_type = feedforward_type
+        self.E_k = E_k
+        self.E_q = E_q
+        self.E_total = E_total
+        self.E_v = E_v
+        self.attention_bias = attention_bias
+        self.bias = bias
+        self.d_model = d_model
+        self.dropout = dropout
+        self.hidden_size = hidden_size
+        self.input_dim = input_dim
+        self.intermediary_dim = intermediary_dim
+        self.intermediate_size = intermediate_size
+        self.kv_lora_rank = kv_lora_rank
+        self.n_routed_experts = n_routed_experts
+        self.n_shared_experts = n_shared_experts
+        self.num_experts_per_token = num_experts_per_token
+        self.num_heads = num_heads
+        self.num_kv_groups = num_kv_groups
+        self.q_lora_rank = q_lora_rank
+        self.qk_nope_head_dim = qk_nope_head_dim
+        self.qk_norm = qk_norm
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.rms_norm_eps = rms_norm_eps
+        self.v_head_dim = v_head_dim
+        self.num_nextn_predict_layers = num_nextn_predict_layers
+        self.initializer_range = initializer_range
 
 
 class BaGLConfig(PretrainedConfig):
@@ -45,13 +122,13 @@ class BaGLConfig(PretrainedConfig):
            number of shared experts in moe layers.
         mtp_config (`dict` *optional* defaults to None):
            parameters for the multitoken prediction heads.
-        num_nextn_predict_layers (`int` *optional* defaults to 0):
-           number of multi token prediction layers to add.
         tie_word_embeddings (`bool` *optional* defaults to False):
            whether to tie the weights of the embedding layer and the lm_head.
         initializer_range (`float` *optional* defaults to 0.02):
            value to use when initializing model weights.
     """
+
+    model_type = "bagl"
 
     def __init__(
         self,
@@ -76,8 +153,6 @@ class BaGLConfig(PretrainedConfig):
         max_position_embeddings: int = 4096,
         rope_base: float = 500000.0,
         n_shared_experts: int = 1,
-        num_nextn_predict_layers: int = 0,
-        mtp_config: dict[str, Any] | None = None,
         tie_word_embeddings: bool = False,
         initializer_range: float = 0.2,
         **kwargs,
@@ -107,6 +182,25 @@ class BaGLConfig(PretrainedConfig):
         self.num_experts_per_tok = num_experts_per_tok
         self.n_routed_experts = n_routed_experts
         self.n_shared_experts = n_shared_experts
-        self.num_nextn_predict_layers = num_nextn_predict_layers
+        self.initializer_range = initializer_range
+
+
+class BaGLWithMTPConfig(PretrainedConfig):
+    model_type = "bagl_with_mpt"
+    sub_configs = {"bagl_config": BaGLConfig, "mtp_config": BaGLMTPConfig}
+
+    def __init__(
+        self,
+        bagl_config: BaGLConfig = BaGLConfig(),
+        mtp_config: BaGLMTPConfig = BaGLMTPConfig(),
+        tie_word_embeddings: bool = False,
+        initializer_range: float = 0.2,
+        **kwargs,
+    ):
+        self.bagl_config = bagl_config
         self.mtp_config = mtp_config
         self.initializer_range = initializer_range
+        super().__init__(
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs,
+        )

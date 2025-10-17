@@ -62,7 +62,7 @@ class GroupedQueryAttention(nn.Module):
             E_v, num_kv_groups * self.E_head, bias=attention_bias, **factory_kwargs
         )
 
-    # @torch.compile(mode="max-autotune")
+    @torch.compile()
     def forward(
         self,
         query: torch.Tensor,
@@ -123,7 +123,7 @@ class GroupedQueryAttention(nn.Module):
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)
-        attn_output = flex_attention(
+        attn_output = torch.compile(flex_attention)(
             query_proj,
             key_proj,
             value_proj,
