@@ -1,0 +1,55 @@
+x-common: &common-config
+  shm_size: 200gb
+  environment:
+    HF_TOKEN: "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"
+    TRITON_CACHE_DIR: "/cache/triton_cache"
+    HF_HOME: "/cache/huggingface"
+    GIT_PYTHON_REFRESH: "quiet"
+    GRADIO_SERVER_PORT: "7861"
+    GRADIO_SERVER_NAME: "0.0.0.0"
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "5"
+  volumes:
+    - /home/ubuntu/data_mount/output_dir:/app/output_dir
+    - /home/ubuntu/data_mount/results:/app/results
+    - /home/ubuntu/data_mount/huggingface:/cache/huggingface
+    - /home/ubuntu/data_mount/triton_cache:/cache/triton_cache
+
+services:
+  trainer:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: trainer.Dockerfile
+    image: bagl_trainer_image
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 8
+              capabilities: [gpu]
+  evaluator:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: eval.Dockerfile
+    image: bagl_evaluator_image
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  trackio:
+    <<: *common-config
+    restart: always
+    build:
+      context: .
+      dockerfile: trackio.Dockerfile
+    image: trackio_image
+    ports:
+      - "7861:7861"

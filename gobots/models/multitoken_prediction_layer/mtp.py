@@ -35,7 +35,6 @@ class MultiTokenPredictionHead(GradientCheckpointingLayer):
         self.norm2 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.attention = _attention_mechanisms[self.attention_type](**config.to_dict())
-
         self.feedforward = _feedforward_layers[self.feedforward_type](
             **config.to_dict()
         )

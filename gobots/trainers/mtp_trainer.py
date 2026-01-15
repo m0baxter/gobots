@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from transformers import Trainer
+from transformers.trainer_pt_utils import get_parameter_names
+from ..losses import fast_cross_entropy_loss
 
 
 class MTPTrainer(Trainer):
@@ -10,7 +12,6 @@ class MTPTrainer(Trainer):
         mtp_weight: float = 0.01,
         mtp_depth: int = 1,
         z_loss_weight: float = 0.001,
-        ignore_index: int = -100,
         *args,
         **kwargs,
     ):
@@ -20,7 +21,6 @@ class MTPTrainer(Trainer):
         self.z_loss_weight = z_loss_weight
         self.mtp_depth = mtp_depth
         self.auxiliary_loss_weight = auxiliary_loss_weight
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
     def compute_loss(
         self,
@@ -29,7 +29,6 @@ class MTPTrainer(Trainer):
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | None = None,
     ):
-        # torch.compiler.cudagraph_mark_step_begin()
         _, s = inputs["input_ids"][:, : -(1 + self.mtp_depth)].shape
 
         outputs = model(
@@ -37,15 +36,15 @@ class MTPTrainer(Trainer):
             document_ids=inputs["document_ids"][:, : -(1 + self.mtp_depth)],
             input_pos=inputs["input_pos"][:, : -(1 + self.mtp_depth)],
         )
-        logits, mtp_logits, auxiliary_losses, z_losses = (
+        # logits, mtp_logits, auxiliary_losses, z_losses = (
+        logits, mtp_logits, auxiliary_losses, _ = (
             outputs["logits"],
             outputs.get("mtp_logits", []),
             outputs.get("auxiliary_losses", []),
             outputs.get("z_losses", []),
         )
-        main_loss = self.loss_fn(
-            logits.view(-1, logits.size(-1)),
-            inputs["input_ids"][:, 1 : s + 1].contiguous().view(-1),
+        main_loss = fast_cross_entropy_loss(
+            logits, inputs["input_ids"][:, 1 : s + 1].contiguous()
         )
 
         mtp_loss = torch.tensor(0.0).to(logits.device)
@@ -53,9 +52,8 @@ class MTPTrainer(Trainer):
         auxiliary_loss = torch.tensor(0.0).to(logits.device)
 
         for d, logits_d in enumerate(mtp_logits, start=1):
-            mtp_loss += self.loss_fn(
-                logits_d.view(-1, logits_d.size(-1)),
-                inputs["input_ids"][:, 1 + d : d + s + 1].contiguous().view(-1),
+            mtp_loss += fast_cross_entropy_loss(
+                logits_d, inputs["input_ids"][:, 1 + d : d + s + 1].contiguous()
             )
 
         if len(mtp_logits) > 0:
@@ -66,10 +64,10 @@ class MTPTrainer(Trainer):
                 self.auxiliary_loss_weight * torch.cat(auxiliary_losses).sum()
             )
 
-        if len(z_losses) > 0:
-            z_loss = self.z_loss_weight * torch.sum(torch.stack(z_losses))
+        # if len(z_losses) > 0:
+        #    z_loss = self.z_loss_weight * torch.sum(torch.stack(z_losses))
 
-        total_loss = main_loss + mtp_loss + auxiliary_loss + z_loss
+        total_loss = main_loss + mtp_loss + auxiliary_loss  # + z_loss
 
         if return_outputs:
             output = {
@@ -84,3 +82,32 @@ class MTPTrainer(Trainer):
             return total_loss, output
 
         return total_loss
+
+    def get_decay_parameter_names(self, model) -> list[str]:
+        """
+        Get all parameter names that weight decay will be applied to.
+
+        This function filters out parameters in two ways:
+        1. By layer type (instances of layers specified in ALL_LAYERNORM_LAYERS)
+        2. By parameter name patterns (containing 'bias', or variation of 'norm')
+        """
+        forbidden_name_patterns = [
+            r"bias",
+            r"layernorm",
+            r"rmsnorm",
+            r"(?:^|\.)norm(?:$|\.)",
+            r"_norm(?:$|\.)",
+            "embedding",
+        ]
+
+        if (
+            hasattr(model.config, "tie_word_embeddings")
+            and model.config.tie_word_embeddings
+        ):
+            forbidden_name_patterns = forbidden_name_patterns + ["lm_head"]
+
+        decay_parameters = get_parameter_names(
+            model, [nn.LayerNorm], forbidden_name_patterns
+        )
+
+        return decay_parameters

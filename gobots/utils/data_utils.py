@@ -1,10 +1,13 @@
 import boto3
 import botocore
-import re
+
+# import re
 import smart_open
 from botocore.exceptions import ClientError
 from datasets import load_dataset, interleave_datasets
 from functools import partial
+
+drop_columns = []
 
 
 def download_contents(
@@ -54,18 +57,8 @@ def mark_documents(token_ids, eos_token_id):
     return doc_id, pos_id
 
 
-def just_text(example):
-    return {"text": example["text"]}
-
-
 def format_cosmopedia(example, tokenizer):
-    chat = [
-        {"role": "user", "content": example["prompt"]},
-        {"role": "assistant", "content": example["text"]},
-    ]
-
-    text = tokenizer.apply_chat_template(chat, tokenize=False)
-    text = re.sub(r"(\<\|begin_of_text\|\>)((.|\n)*?)(\<\|eot_id\|\>)", "", text)
+    text = f"{example['prompt']}\n\nResponse:\n{example['text']}"
 
     return {"text": text}
 
@@ -132,50 +125,37 @@ def prepare_pretraining_datasets(
         split="train",
         num_proc=num_shards,
     ).to_iterable_dataset(num_shards=num_shards)
-    dataset_finemath = load_dataset(
+    dataset_finepdfs = load_dataset(
+        "HuggingFaceFW/finepdfs",
+        revision="v1.6.0",
+        name="eng_Latn",
+        split="train",
+        num_proc=num_shards,
+    ).to_iterable_dataset(num_shards=num_shards)
+    # dataset_dclm_edu = load_dataset(
+    #     "HuggingFaceTB/dclm-edu",
+    #     split="train",
+    #     num_proc=num_shards,
+    # ).to_iterable_dataset(num_shards=num_shards)
+    dataset_finemath1 = load_dataset(
         "HuggingFaceTB/finemath",
-        "finemath-4plus",
+        "finemath-3plus",
+        split="train",
+        num_proc=num_shards,
+    ).to_iterable_dataset(num_shards=num_shards)
+    dataset_finemath2 = load_dataset(
+        "HuggingFaceTB/finemath",
+        "infiwebmath-3plus",
         split="train",
         num_proc=num_shards,
     ).to_iterable_dataset(num_shards=num_shards)
 
-    dataset_fineweb_edu = dataset_fineweb_edu.map(
-        just_text, remove_columns=["id", "metadata"]
-    )
-    dataset_python_edu = dataset_python_edu.map(
-        just_text,
-        remove_columns=[
-            "download_success",
-            "blob_id",
-            "repo_name",
-            "path",
-            "length_bytes",
-            "score",
-            "int_score",
-            "metadata",
-            "language",
-        ],
-    )
-    dataset_finemath = dataset_finemath.map(
-        just_text,
-        remove_columns=[
-            "url",
-            "fetch_time",
-            "content_mime_type",
-            "warc_filename",
-            "warc_record_offset",
-            "warc_record_length",
-            "token_count",
-            "char_count",
-            "score",
-            "int_score",
-            "crawl",
-            "snapshot_type",
-            "metadata",
-            "language",
-            "language_score",
-        ],
-    )
+    dataset_fineweb_edu = dataset_fineweb_edu.select_columns(column_names="text")
+    dataset_finepdfs = dataset_finepdfs.select_columns(column_names="text")
+    dataset_python_edu = dataset_python_edu.select_columns(column_names="text")
+    dataset_finemath1 = dataset_finemath1.select_columns(column_names="text")
+    dataset_finemath2 = dataset_finemath2.select_columns(column_names="text")
+    # dataset_dclm_edu = dataset_dclm_baseline.select_columns(column_names="text")
     dataset_cosmopedia_v2 = dataset_cosmopedia_v2.map(
         partial(format_cosmopedia, tokenizer=tokenizer),
         remove_columns=[
@@ -200,11 +180,16 @@ def prepare_pretraining_datasets(
     merged_dataset = interleave_datasets(
         [
             dataset_fineweb_edu,
+            # dataset_dclm_edu,
             dataset_cosmopedia_v2,
+            dataset_finepdfs,
             dataset_python_edu,
-            dataset_finemath,
+            dataset_finemath1,
+            dataset_finemath2,
         ],
-        probabilities=[0.7, 0.15, 0.08, 0.07],
+        # probabilities=[0.30, 0.30, 0.125, 0.125, 0.12, 0.015, 0.015],
+        probabilities=[0.60, 0.125, 0.125, 0.12, 0.015, 0.015],
+        stopping_strategy="first_exhausted",
         seed=seed,
     )
     merged_dataset = merged_dataset.map(

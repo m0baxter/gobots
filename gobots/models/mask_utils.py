@@ -22,7 +22,7 @@ def create_causal_mask(
         H=num_heads,
         Q_LEN=query_length,
         KV_LEN=key_value_length,
-        _compile=True,
+        # _compile=True,
     )
 
 
@@ -43,7 +43,7 @@ def create_causal_document_mask(
         H=num_heads,
         Q_LEN=query_length,
         KV_LEN=key_value_length,
-        _compile=True,
+        # _compile=True,
     )
 
 

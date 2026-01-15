@@ -4,11 +4,11 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 from transformers import GradientCheckpointingLayer, PreTrainedModel, GenerationMixin
 from transformers.utils import ModelOutput
-from torchtune.modules import RotaryPositionalEmbeddings
+from ..positional_embeddings import RotaryPositionalEmbeddings
 from ..attention_mechanisms import GroupedQueryAttention
 from ..feedforward_layers import SwiGLUFeedForward
 from ..mask_utils import generate_block_mask
-from ..mixture_of_experts import MixtureOfExperts
+from ..mixture_of_experts import MixtureOfExperts, Experts
 from ..multitoken_prediction_layer import MultiTokenPredictionHead
 from .configuration_bagl import BaGLConfig, BaGLMTPConfig, BaGLWithMTPConfig
 
@@ -63,11 +63,11 @@ class BaGLBlock(GradientCheckpointingLayer):
 
         else:
             self.feedforward = MixtureOfExperts(
-                n_shared_experts=config.n_shared_experts,
+                shared_expert=config.shared_expert,
                 n_routed_experts=config.n_routed_experts,
                 hidden_size=config.hidden_size,
                 intermediate_size=config.intermediate_size,
-                num_experts_per_token=config.num_experts_per_tok,
+                num_experts_per_token=config.num_experts_per_token,
             )
 
     def forward(self, x, mask=None, pos_embedding=None, input_pos=None):
@@ -101,7 +101,9 @@ class BaGLBlock(GradientCheckpointingLayer):
 
 
 class BaGLModel(PreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+    _no_split_modules = ["BaGLBlock"]
+    _supports_flex_attn = True
+    _tied_weights_keys = {"lm_head.weight": "embedding_layer.weight"}
     supports_gradient_checkpointing = True
     config_class = BaGLConfig
 
@@ -115,6 +117,17 @@ class BaGLModel(PreTrainedModel, GenerationMixin):
 
             if module.bias is not None:
                 module.bias.data.zero_()
+
+        elif isinstance(module, Experts):
+            w_fan_in_1 = module.fc1.shape[-1]
+            w_fan_in_2 = module.fc2.shape[-1]
+            std_1 = torch.math.sqrt(self.config.initializer_range / w_fan_in_1)
+            std_2 = torch.math.sqrt(self.config.initializer_range / w_fan_in_2)
+
+            module.fc1.data.normal_(mean=0.0, std=std_1)
+            module.fc2.data.normal_(mean=0.0, std=std_2)
+            module.fc1.data.clamp_(min=-2 * std_1, max=2 * std_1)
+            module.fc2.data.clamp_(min=-2 * std_2, max=2 * std_2)
 
         elif isinstance(module, nn.Embedding):
             w_fan_in = module.weight.shape[-1]
@@ -148,7 +161,7 @@ class BaGLModel(PreTrainedModel, GenerationMixin):
         )
         self.rope = RotaryPositionalEmbeddings(
             dim=config.hidden_size // config.num_attention_heads,
-            max_seq_len=config.max_position_embeddings,
+            max_position_embeddings=config.max_position_embeddings,
             base=config.rope_base,
         )
 
@@ -168,11 +181,20 @@ class BaGLModel(PreTrainedModel, GenerationMixin):
         document_ids=None,
         input_pos=None,
         labels=None,
+        cache_position=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        use_cache=False,
+        return_dict=False,
+        attention_mask=None,
     ):
         b, s = input_ids.shape
         x = self.embed_norm(self.embedding_layer(input_ids))
         auxiliary_losses = []
         z_losses = []
+
+        if document_ids is None:
+            document_ids = attention_mask
 
         if mask is None:
             mask = generate_block_mask(
@@ -204,7 +226,8 @@ class BaGLModel(PreTrainedModel, GenerationMixin):
 
 
 class BaGLMTPModel(PreTrainedModel):
-    _tied_weights_keys = ["embedding_layer.weight", "lm_head.weight"]
+    _supports_flex_attn = True
+    _tied_weights_keys = {"lm_head.weight": "embedding_layer.weight"}
     supports_gradient_checkpointing = True
     config_class = BaGLMTPConfig
 
@@ -218,6 +241,17 @@ class BaGLMTPModel(PreTrainedModel):
 
             if module.bias is not None:
                 module.bias.data.zero_()
+
+        elif isinstance(module, Experts):
+            w_fan_in_1 = module.fc1.shape[-1]
+            w_fan_in_2 = module.fc2.shape[-1]
+            std_1 = torch.math.sqrt(self.config.initializer_range / w_fan_in_1)
+            std_2 = torch.math.sqrt(self.config.initializer_range / w_fan_in_2)
+
+            module.fc1.data.normal_(mean=0.0, std=std_1)
+            module.fc2.data.normal_(mean=0.0, std=std_2)
+            module.fc1.data.clamp_(min=-2 * std_1, max=2 * std_1)
+            module.fc2.data.clamp_(min=-2 * std_2, max=2 * std_2)
 
         elif isinstance(module, nn.Embedding):
             w_fan_in = module.weight.shape[-1]
@@ -244,7 +278,7 @@ class BaGLMTPModel(PreTrainedModel):
 
         self.rope = RotaryPositionalEmbeddings(
             dim=config.hidden_size // config.num_heads,
-            max_seq_len=config.max_position_embeddings,
+            max_position_embeddings=config.max_position_embeddings,
             base=config.rope_base,
         )
 
@@ -348,14 +382,15 @@ class BaGLMTPModel(PreTrainedModel):
 
 
 class BaGLWithMTPModel(PreTrainedModel):
-    _tied_weights_keys = [
-        "bagl_model.embedding_layer.weight",
-        "bagl_model.lm_head.weight",
-        "mtp_model.embedding_layer.weight",
-        "mtp_model.lm_head.weight",
-    ]
+    _no_split_modules = ["BaGLBlock"]
+    _supports_flex_attn = True
+    _tied_weights_keys = {
+        "bagl_model.lm_head.weight": "bagl_model.embedding_layer.weight",
+        "mtp_model.embedding_layer.weight": "bagl_model.embedding_layer.weight",
+        "mtp_model.lm_head.weight": "bagl_model.embedding_layer.weight",
+    }
     supports_gradient_checkpointing = True
-    config_class = BaGLMTPConfig
+    config_class = BaGLWithMTPConfig
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -367,6 +402,17 @@ class BaGLWithMTPModel(PreTrainedModel):
 
             if module.bias is not None:
                 module.bias.data.zero_()
+
+        elif isinstance(module, Experts):
+            w_fan_in_1 = module.fc1.shape[-1]
+            w_fan_in_2 = module.fc2.shape[-1]
+            std_1 = torch.math.sqrt(self.config.initializer_range / w_fan_in_1)
+            std_2 = torch.math.sqrt(self.config.initializer_range / w_fan_in_2)
+
+            module.fc1.data.normal_(mean=0.0, std=std_1)
+            module.fc2.data.normal_(mean=0.0, std=std_2)
+            module.fc1.data.clamp_(min=-2 * std_1, max=2 * std_1)
+            module.fc2.data.clamp_(min=-2 * std_2, max=2 * std_2)
 
         elif isinstance(module, nn.Embedding):
             w_fan_in = module.weight.shape[-1]
@@ -397,7 +443,7 @@ class BaGLWithMTPModel(PreTrainedModel):
             )
             self._tie_or_clone_weights(self.mtp_model.lm_head, self.bagl_model.lm_head)
 
-        self.post_init
+        self.post_init()
 
     def forward(
         self,

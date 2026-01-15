@@ -1,8 +1,10 @@
 from transformers import PretrainedConfig
+from typing import Optional, Union
 
 
 class BaGLMTPConfig(PretrainedConfig):
-    model_type = "bagl_mpt"
+    model_type = "bagl_mtp"
+    # base_config_key = "mtp_config"
 
     def __init__(
         self,
@@ -27,7 +29,7 @@ class BaGLMTPConfig(PretrainedConfig):
         intermediate_size: int | None = None,
         kv_lora_rank: int | None = None,
         n_routed_experts: int | None = None,
-        n_shared_experts: int | None = None,
+        shared_expert: bool | None = None,
         num_experts_per_token: int | None = None,
         num_heads: int | None = None,
         num_kv_groups: int | None = None,
@@ -65,7 +67,7 @@ class BaGLMTPConfig(PretrainedConfig):
         self.intermediate_size = intermediate_size
         self.kv_lora_rank = kv_lora_rank
         self.n_routed_experts = n_routed_experts
-        self.n_shared_experts = n_shared_experts
+        self.shared_expert = shared_expert
         self.num_experts_per_token = num_experts_per_token
         self.num_heads = num_heads
         self.num_kv_groups = num_kv_groups
@@ -118,7 +120,7 @@ class BaGLConfig(PretrainedConfig):
            number of experts choosen per token.
         n_routed_experts (`int` *optional` defaults to 16):
            total number of experts per MOE layer.
-        n_shared_experts (`int` *optional* defaults to 1):
+        shared_experts (`bool` *optional* defaults to True):
            number of shared experts in moe layers.
         mtp_config (`dict` *optional* defaults to None):
            parameters for the multitoken prediction heads.
@@ -129,6 +131,7 @@ class BaGLConfig(PretrainedConfig):
     """
 
     model_type = "bagl"
+    base_config_key = "bagl_config"
 
     def __init__(
         self,
@@ -140,7 +143,7 @@ class BaGLConfig(PretrainedConfig):
         dense_layers: list[int] = [],
         hidden_size: int = 2048,
         intermediate_size: int = 16384,
-        num_experts_per_tok: int = 1,
+        num_experts_per_token: int = 1,
         n_routed_experts: int = 16,
         num_attention_heads: int = 32,
         num_key_value_heads: int = 8,
@@ -152,7 +155,7 @@ class BaGLConfig(PretrainedConfig):
         rms_norm_eps: float = 1e-05,
         max_position_embeddings: int = 4096,
         rope_base: float = 500000.0,
-        n_shared_experts: int = 1,
+        shared_expert: bool | None = None,
         tie_word_embeddings: bool = False,
         initializer_range: float = 0.2,
         **kwargs,
@@ -179,24 +182,38 @@ class BaGLConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.max_position_embeddings = max_position_embeddings
         self.rope_base = rope_base
-        self.num_experts_per_tok = num_experts_per_tok
+        self.num_experts_per_token = num_experts_per_token
         self.n_routed_experts = n_routed_experts
-        self.n_shared_experts = n_shared_experts
+        self.shared_expert = shared_expert
         self.initializer_range = initializer_range
 
 
 class BaGLWithMTPConfig(PretrainedConfig):
-    model_type = "bagl_with_mpt"
+    model_type = "bagl_with_mtp"
     sub_configs = {"bagl_config": BaGLConfig, "mtp_config": BaGLMTPConfig}
 
     def __init__(
         self,
-        bagl_config: BaGLConfig = BaGLConfig(),
-        mtp_config: BaGLMTPConfig = BaGLMTPConfig(),
+        bagl_config=None,
+        mtp_config=None,
         tie_word_embeddings: bool = False,
         initializer_range: float = 0.2,
         **kwargs,
     ):
+        if bagl_config is None:
+            self.bagl_config = BaGLConfig()
+        elif isinstance(bagl_config, dict):
+            self.bagl_config = BaGLConfig(**bagl_config)
+        elif isinstance(bagl_config, BaGLConfig):
+            self.bagl_config = bagl_config
+
+        if mtp_config is None:
+            self.mtp_config = BaGLMTPConfig()
+        elif isinstance(mtp_config, dict):
+            self.mtp_config = BaGLMTPConfig(**mtp_config)
+        elif isinstance(bagl_config, BaGLMTPConfig):
+            self.mtp_config = mtp_config
+
         self.bagl_config = bagl_config
         self.mtp_config = mtp_config
         self.initializer_range = initializer_range
@@ -204,3 +221,34 @@ class BaGLWithMTPConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+
+    @property
+    def _attn_implementation(self):
+        return self._attn_implementation_internal
+
+    @_attn_implementation.setter
+    def _attn_implementation(self, value: Optional[Union[str, dict]]):
+        """We set it recursively on the sub-configs as well"""
+        # Set if for current config
+        current_attn = getattr(self, "_attn_implementation", None)
+        attn_implementation = (
+            value if not isinstance(value, dict) else value.get("", current_attn)
+        )
+        self._attn_implementation_internal = attn_implementation
+
+        # Set it recursively on the subconfigs
+        for subconfig_key, subconfig_class in self.sub_configs.items():
+            subconfig = getattr(self, subconfig_key, None)
+            if isinstance(subconfig, dict):
+                subconfig = subconfig_class(**subconfig)
+                setattr(self, subconfig_key, subconfig)
+            if subconfig is not None:
+                current_subconfig_attn = getattr(
+                    subconfig, "_attn_implementation", None
+                )
+                sub_implementation = (
+                    value
+                    if not isinstance(value, dict)
+                    else value.get(subconfig_key, current_subconfig_attn)
+                )
+                subconfig._attn_implementation = sub_implementation

@@ -30,16 +30,13 @@ class GroupedQueryAttention(nn.Module):
         rms_norm_eps: float = 1.0e-6,
         dropout: float = 0.0,
         attention_bias: bool = False,
-        device=None,
-        dtype=None,
         **kwargs,
     ):
-        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.num_heads = num_heads
         self.dropout = dropout
         E_out = E_q
-        self.out_proj = nn.Linear(E_total, E_out, bias=attention_bias, **factory_kwargs)
+        self.out_proj = nn.Linear(E_total, E_out, bias=attention_bias)
         assert E_total % num_heads == 0, "Embedding dim is not divisible by num_heads"
         assert num_heads % num_kv_groups == 0, (
             "num_heads must be divisible by num_kv_groups"
@@ -54,15 +51,19 @@ class GroupedQueryAttention(nn.Module):
         self.num_kv_groups = num_kv_groups
         self.group_size = num_heads // num_kv_groups
 
-        self.q_proj = nn.Linear(E_q, E_total, bias=attention_bias, **factory_kwargs)
+        self.q_proj = nn.Linear(E_q, E_total, bias=attention_bias)
         self.k_proj = nn.Linear(
-            E_k, num_kv_groups * self.E_head, bias=attention_bias, **factory_kwargs
+            E_k,
+            num_kv_groups * self.E_head,
+            bias=attention_bias,
         )
         self.v_proj = nn.Linear(
-            E_v, num_kv_groups * self.E_head, bias=attention_bias, **factory_kwargs
+            E_v,
+            num_kv_groups * self.E_head,
+            bias=attention_bias,
         )
 
-    @torch.compile()
+    # @torch.compile()
     def forward(
         self,
         query: torch.Tensor,
@@ -115,15 +116,16 @@ class GroupedQueryAttention(nn.Module):
 
         if pos_embedding:
             query_proj = pos_embedding(
-                query_proj.transpose(1, 2), input_pos=input_pos
+                query_proj.transpose(1, 2), position_ids=input_pos
             ).transpose(1, 2)
             key_proj = pos_embedding(
-                key_proj.transpose(1, 2), input_pos=input_pos
+                key_proj.transpose(1, 2), position_ids=input_pos
             ).transpose(1, 2)
 
         # Step 3. Run SDPA
         # (N, num_heads, L_t, E_head)
-        attn_output = torch.compile(flex_attention)(
+        # attn_output = torch.compile(flex_attention)(
+        attn_output = flex_attention(
             query_proj,
             key_proj,
             value_proj,
