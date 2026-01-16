@@ -11,6 +11,8 @@ dependencies = [
     "emoji>=2.15.0",
     "huggingface-hub>=0.36.0",
     "lighteval[multilingual,extended_tasks,math]>=0.13.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
     "smart-open>=7.5.0",
     "torch==2.9.1",
     "trackio>=0.15.0",
@@ -21,5 +23,5 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff>=0.14.12",
+    "ruff>=0.14.13",
 ]
