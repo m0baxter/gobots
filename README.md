@@ -38,6 +38,9 @@ The GoBots to Hugging Face's Transformers
   - [Mixture of Experts Architectures](#mixture-of-experts-architectures)
     - [Llama 4](#llama-4)
     - [DeepSeek V3](#deepseek-v3)
+- [BaGL](#bagl)
+  - [Training BaGL](#training-bagl)
+  - [evaluation](#evaluation)
 
 ## Architectural Components
 
@@ -809,3 +812,74 @@ config = DeepSeekV3Config(
 )
 model = DeepSeekV3Model(config)
 ```
+
+## BaGL
+
+Ultimately, this repository can be used to train an LLM from scratch. The code can be used to train one of three versions of BaGL (BaGL is A Good Language model).
+
+### Training BaGL
+
+First modify `trainer.Dockerfile` to use the desired training config file. Configs for the dense, MOE, hybrid versions of the model are provided in `./configs`. Next build the training image
+
+```
+docker compose -f docker-compose.yaml build trainer
+```
+
+Next run the training proccess 
+```
+docker compose -f docker-compose.yaml up -d trainer
+```
+
+optionally the process can be monitored with [trackio](https://github.com/gradio-app/trackio) while running
+```
+docker compose -f docker-compose.yaml up -d trainer trackio
+```
+
+### Evaluation
+
+The evaluations use [lighteval](https://github.com/huggingface/lighteval) framework and can be run using the `evaluator` service
+
+```
+docker compose -f docker-compose.yaml build evaluator
+docker compose -f docker-compose.yaml up -d evaluator
+```
+
+the results of training the three versions of BaGL are summarized in the following tables:
+
+| model  | truthfulqa mc1 | truthfulqa mc2 | winogrande (5-shot) | hellaswag (10-shot) | arc    | ifeval (prompt strict) | ifeval (instruct strict) | ifeval (prompt loose) | ifeval (instruct loose) | gpqa   | mmlu pro (5-shot) | bbh (3-shot) | musr   |
+|--------|----------------|----------------|---------------------|---------------------|--------|------------------------|--------------------------|-----------------------|-------------------------|--------|-------------------|--------------|--------|
+| dense  |         0.2644 |         0.4520 |              0.4964 |              0.3174 | 0.2159 |                        |                          |                       |                         |        |                   |              |        |
+| moe    |         0.2521 |         0.4437 |              0.4957 |              0.2475 | 0.2218 |                 0.1109 |                   0.1966 |                0.1331 |                  0.2530 | 0.2545 |            0.099  |       0.3075 | 0.4041 |
+| hybrid |         0.2656 |         0.4575 |              0.5122 |              0.2536 | 0.2039 |                 0.1146 |                   0.2266 |                0.1201 |                  0.2314 | 0.2500 |            0.1139 |       0.3087 | 0.3923 |
+
+
+task-wise break down of bbh results:
+
+|                             bbh subtask | moe    | hybrid |
+|-----------------------------------------|--------|--------|
+| causal_judgment                         | 0.5158 | 0.5158 |
+| date_understanding                      | 0.0000 | 0.0000 |
+| disambiguation_qa                       | 0.3101 | 0.3140 |
+| geometric_shapes                        | 0.0917 | 0.1000 |
+| logical_deduction_five_objects          | 0.1980 | 0.2040 |
+| logical_deduction_seven_objects         | 0.1400 | 0.1429 |
+| logical_deduction_three_objects         | 0.3367 | 0.3333 |
+| movie_recommendation                    | 0.2440 | 0.2600 |
+| navigate                                | 0.5000 | 0.4970 |
+| reasoning_about_colored_objects         | 0.0795 | 0.0810 |
+| ruin_names                              | 0.2478 | 0.2790 |
+| salient_translation_error_detection     | 0.2475 | 0.1784 |
+| snarks                                  | 0.4530 | 0.4641 |
+| sports_understanding                    | 0.5010 | 0.5110 |
+| temporal_sequences                      | 1.0000 | 1.0000 |
+| tracking_shuffled_objects_five_objects  | 0.2000 | 0.2008 |
+| tracking_shuffled_objects_seven_objects | 0.1337 | 0.1429 |
+| tracking_shuffled_objects_three_objects | 0.3367 | 0.3333 |
+
+task-wise break down of musr results:
+
+| musr sub task     | moe    | hybrid |
+|-------------------|--------|--------|
+| murder_mysteries  | 0.5000 | 0.4840 |
+| object_placements | 0.3242 | 0.2969 |
+| team_allocation   | 0.3880 | 0.3960 |
