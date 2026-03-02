@@ -4,6 +4,12 @@ from pydantic import BaseModel
 from typing import Any
 
 
+class ModelType(str, Enum):
+    DENSE = "dense"
+    MOE = "moe"
+    HYBRID = "hybrid"
+
+
 class LRScheduleType(str, Enum):
     linear = "linear"
     cosine = "cosine"
@@ -107,6 +113,7 @@ class ZClipConfig(BaseModel):
 
 class TrainingConfig(BaseModel):
     run_name: str
+    model_type: ModelType
     max_steps: int
     warmup_steps: int
     lr_scheduler_type: LRScheduleType

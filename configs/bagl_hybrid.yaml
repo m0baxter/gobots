@@ -1,5 +1,6 @@
 training:
-  run_name: "bagl_hybrid_08"
+  run_name: "hybrid_test"
+  model_type: "hybrid"
   max_steps: 92000
   warmup_steps: 2000
   lr_scheduler_type: "warmup_stable_decay"

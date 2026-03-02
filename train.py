@@ -4,10 +4,10 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from transformers import TrainingArguments
 from gobots.callbacks import ZClipCallback
-from gobots.model_factory import build_bagl_hybrid
+from gobots.model_factory import build_bagl_hybrid, build_bagl_dense, build_bagl_moe
 from gobots.trainers import MTPTrainer, LossAccumulator
 from gobots.utils.data_utils import prepare_pretraining_datasets
-from gobots.utils.parse_config import load_config_file
+from gobots.utils.parse_config import load_config_file, ModelType
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -20,7 +20,7 @@ torch.set_float32_matmul_precision("high")
 
 def create_argparser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--training_config", choices=["train", "eval"])
+    parser.add_argument("--training_config", type=str)
 
     return parser
 
@@ -58,7 +58,14 @@ if __name__ == "__main__":
 
         return
 
-    config, tokenizer, model = build_bagl_hybrid()
+    if training_config.model_type == ModelType.DENSE:
+        config, tokenizer, model = build_bagl_dense()
+
+    elif training_config.model_type == ModelType.MOE:
+        config, tokenizer, model = build_bagl_moe()
+
+    elif training_config.model_type == ModelType.HYBRID:
+        config, tokenizer, model = build_bagl_hybrid()
 
     train_dataset = prepare_pretraining_datasets(
         tokenizer,
@@ -109,13 +116,13 @@ if __name__ == "__main__":
         compute_metrics=compute_metrics,
         callbacks=[
             ZClipCallback(
-                mode=training_config.zclip_config,
-                alpha=training_config.zclip_config,
-                clip_option=training_config.zclip_config,
-                z_thresh=training_config.zclip_config,
-                clip_factor=training_config.zclip_config,
-                max_grad_norm=training_config.zclip_config,
-                warmup_steps=training_config.zclip_config,
+                mode=training_config.zclip_config.mode,
+                alpha=training_config.zclip_config.alpha,
+                clip_option=training_config.zclip_config.clip_option,
+                z_thresh=training_config.zclip_config.z_thresh,
+                clip_factor=training_config.zclip_config.clip_factor,
+                max_grad_norm=training_config.zclip_config.max_grad_norm,
+                warmup_steps=training_config.zclip_config.warmup_steps,
             )
         ],
     )

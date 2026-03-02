@@ -15,5 +15,5 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
-CMD ["uv", "run", "accelerate", "launch", "--config_file", "configs/fsdp_config.yaml", "train.py", "--mode", "train", "--no-shutdown"]
+CMD ["uv", "run", "accelerate", "launch", "--config_file", "configs/fsdp_config.yaml", "train.py", "--training_config", "configs/bagl_350M.yaml"]
 #CMD ["uv", "run", "train.py", "--mode", "train", "--no-shutdown"]

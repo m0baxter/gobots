@@ -119,12 +119,12 @@ def prepare_pretraining_datasets(
         split="train",
         num_proc=4,
     ).to_iterable_dataset(num_shards=num_shards)
-    dataset_cosmopedia_v2 = load_dataset(
-        "HuggingFaceTB/smollm-corpus",
-        "cosmopedia-v2",
-        split="train",
-        num_proc=num_shards,
-    ).to_iterable_dataset(num_shards=num_shards)
+    # dataset_cosmopedia_v2 = load_dataset(
+    #     "HuggingFaceTB/smollm-corpus",
+    #     "cosmopedia-v2",
+    #     split="train",
+    #     num_proc=num_shards,
+    # ).to_iterable_dataset(num_shards=num_shards)
     dataset_finepdfs = load_dataset(
         "HuggingFaceFW/finepdfs",
         revision="v1.6.0",
@@ -156,18 +156,18 @@ def prepare_pretraining_datasets(
     dataset_finemath1 = dataset_finemath1.select_columns(column_names="text")
     dataset_finemath2 = dataset_finemath2.select_columns(column_names="text")
     # dataset_dclm_edu = dataset_dclm_baseline.select_columns(column_names="text")
-    dataset_cosmopedia_v2 = dataset_cosmopedia_v2.map(
-        partial(format_cosmopedia, tokenizer=tokenizer),
-        remove_columns=[
-            "prompt",
-            "token_length",
-            "audience",
-            "format",
-            "seed_data",
-            "metadata",
-            "language",
-        ],
-    )
+    # dataset_cosmopedia_v2 = dataset_cosmopedia_v2.map(
+    #     partial(format_cosmopedia, tokenizer=tokenizer),
+    #     remove_columns=[
+    #         "prompt",
+    #         "token_length",
+    #         "audience",
+    #         "format",
+    #         "seed_data",
+    #         "metadata",
+    #         "language",
+    #     ],
+    # )
 
     tokenize_fn = partial(
         parse_examples,
@@ -181,14 +181,15 @@ def prepare_pretraining_datasets(
         [
             dataset_fineweb_edu,
             # dataset_dclm_edu,
-            dataset_cosmopedia_v2,
+            # dataset_cosmopedia_v2,
             dataset_finepdfs,
             dataset_python_edu,
             dataset_finemath1,
             dataset_finemath2,
         ],
         # probabilities=[0.30, 0.30, 0.125, 0.125, 0.12, 0.015, 0.015],
-        probabilities=[0.60, 0.125, 0.125, 0.12, 0.015, 0.015],
+        # probabilities=[0.60, 0.125, 0.125, 0.12, 0.015, 0.015],
+        probabilities=[0.60, 0.25, 0.12, 0.015, 0.015],
         stopping_strategy="first_exhausted",
         seed=seed,
     )
