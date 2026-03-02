@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import PretrainedConfig
+from transformers import GradientCheckpointingLayer, PretrainedConfig
 from ..attention_mechanisms import (
     GroupedQueryAttention,
     MultiHeadAttention,
@@ -20,30 +20,36 @@ _feedforward_layers = {
 }
 
 
-class MultiTokenPredictionHead(nn.Module):
+class MultiTokenPredictionHead(GradientCheckpointingLayer):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
+        self.feedforward_type = config.feedforward_type
+        self.attention_type = config.attention_type
 
         # Combine previous hidden state with future token embedding
         self.combine_proj = nn.Linear(
-            2 * config.hidden_dim, config.hidden_dim, bias=config.attention_bias
+            2 * config.hidden_size, config.hidden_size, bias=config.attention_bias
         )
 
-        self.norm1 = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.norm2 = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
+        self.norm1 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm2 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        self.attention = _attention_mechanisms[config.mtp_config["attention_type"]](
-            **config.mtp_config
+        self.attention = _attention_mechanisms[self.attention_type](**config.to_dict())
+        self.feedforward = _feedforward_layers[self.feedforward_type](
+            **config.to_dict()
         )
 
-        self.feedforward = _feedforward_layers[config.mtp_config["feedforward_type"]](
-            **config.mtp_config
-        )
+        self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.mlp_norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        self.attn_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-        self.mlp_norm = nn.RMSNorm(config.hidden_dim, eps=config.rms_norm_eps)
-
-    def forward(self, prev_hidden, future_token_embed):
+    def forward(
+        self,
+        prev_hidden,
+        future_token_embed,
+        mask=None,
+        pos_embedding=None,
+        input_pos=None,
+    ):
         # Normalize inputs
         prev_norm = self.norm1(prev_hidden)
         future_norm = self.norm2(future_token_embed)
@@ -51,9 +57,32 @@ class MultiTokenPredictionHead(nn.Module):
         # Combine representations
         combined = torch.cat([prev_norm, future_norm], dim=-1)
         hidden = self.combine_proj(combined)
+        normed_hidden = self.attn_norm(hidden)
 
         # Process through transformer components
-        hidden = hidden + self.attention(self.attn_norm(hidden))
-        hidden = hidden + self.feedforward(self.mlp_norm(hidden))
+        if self.attention_type == "multi_head_latent_attention":
+            hidden = hidden + self.attention(
+                normed_hidden, mask, pos_embedding, input_pos
+            )
 
-        return hidden
+        else:
+            hidden = hidden + self.attention(
+                normed_hidden,
+                normed_hidden,
+                normed_hidden,
+                mask,
+                pos_embedding,
+                input_pos,
+            )
+
+        auxiliary_losses = None
+        z_loss = None
+
+        if self.feedforward_type == "moe":
+            output, auxiliary_losses, z_loss = self.feedforward(self.mlp_norm(hidden))
+            hidden = hidden + output
+
+        else:
+            hidden = hidden + self.feedforward(self.mlp_norm(hidden))
+
+        return hidden, auxiliary_losses, z_loss

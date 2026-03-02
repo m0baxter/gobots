@@ -24,16 +24,23 @@ The GoBots to Hugging Face's Transformers
     - [Multi-Head Attention](#multi-head-attention)
     - [Multi-Query Attention](#multi-query-attention)
     - [Grouped-Query Attention](#grouped-query-attention)
+    - [Multi-Head Latent Attention](#multi-head-latent-attention)
   - [Feedforward Network](#feedforward-network)
     - [Dense](#dense)
     - [Mixture of Experts](#mixture-of-experts)
+      - [MOE stability](#moe-stability)
+  - [Multi-Token Prediction](#multi-token-prediction)
 - [LLM Architectures](#llm-architectures)
   - [Dense architectures](#dense-architectures)
     - [Llama 3](#llama-3)
     - [Qwen3 dense](#qwen3-dense)
     - [SmolLM33](#smollm3)
   - [Mixture of Experts Architectures](#mixture-of-experts-architectures)
-    - [Llama 4](#llama-4) 
+    - [Llama 4](#llama-4)
+    - [DeepSeek V3](#deepseek-v3)
+- [BaGL](#bagl)
+  - [Training BaGL](#training-bagl)
+  - [evaluation](#evaluation)
 
 ## Architectural Components
 
@@ -312,10 +319,57 @@ flowchart TB
    khk --> qhm1["q(h-1)"]
    khk --> qh["q(h)"]
 ```
+
+#### Multi-Head Latent Attention
+
+In multi-head latent attention (MLA) the querys, keys, and values are all compressed into lower rank spaces before applying the attention operation. The primary purpose of this operation is to lower the size of the KV cache
+at inference time. In order to incorporate positional embeddings while preserving the benefits of the low-rank projection the DeepSeek architects created a decoupled RoPE mechanism. Here we concatenate two vectors, one which carries
+the content information and another which bears the RoPE positional information
+
+$$
+c_t^{KV} = W^{DKV} h_t,
+$$
+
+$$
+[k^C_{t,1}; k^C_{t,2}; \dots, k^C_{t,n_h}] = k^C_t = W^{UK} c^{KV}_t,
+$$
+
+$$
+k^R_t = \mathrm{RoPE}(W^{KR} h_t),
+$$
+
+$$
+k_{t,i} = [k^C_{t,i}; k^R_t]
+$$
+
+$$
+[v^C_{t,1}; v^C_{t,2}; \dots, v^C_{t,n_h}] = v^C_t = W^{UV} c^{KV}_t,
+$$
+
+$$
+c_t^{Q} = W^{DQ} h_t,
+$$
+
+$$
+[q^C_{t,1}; q^C_{t,2}; \dots, q^C_{t,n_h}] = q^C_t = W^{UQ} c^{Q}_t,
+$$
+
+$$
+[q^R_{t,1}; q^R_{t,2}; \dots, q^R_{t,n_h}] = q^R_t = \mathrm{RoPE}(W^{QR} c^Q_t),
+$$
+
+$$
+q_{t,i} = [q^C_{t,i}; q^R_{t,i}]
+$$
+
+We then apply attention between the query, key and value represented by $q_{t,i}$, $k_{t,i}$, and $v_{t,i}$ respectively. Where $n_h$ is the number of attention heads, $d_h$ the dimension of each head,
+the compression dimensions $d_c (\ll d_h n_h)$ and $d_c^\prime (\ll d_h n_h)$. The projections are $W^{DKV} \in \mathbb{R}^{d_c \times d}$, $W^{UK}, W^{UV} \in \mathbb{R}^{d_h n_h \times d_c}$,
+$W^{KR} \in \mathbb{R}^{d^R_h \times d}$, $W^{DQ} \in \mathbb{R}^{d^\prime_c \times d}$, $W^{UQ} \in \mathbb{R}^{d_h n_h \times d^\prime_c}$, $W^QR \ in \mathbb{R}^{d^R_h n_h \times d^\prime_c}$.
+
 ### Feedforward Network
 
-The second common component of all transformer architectures is the feedforward layer. The feedforward layer is applied after the attention mechanism as a way to add extra information to the token embeddings and to prepare the output of the attention block
-for the next transformer block layer in the stack.
+The second common component of all transformer architectures is the feedforward layer. The feedforward layer is applied after the attention mechanism as a way to add extra information to the token embeddings and to prepare the
+output of the attention block for the next transformer block layer in the stack.
 
 #### dense
 
@@ -323,7 +377,7 @@ A dense feedforward layer is simply a dense neural network layer that is applied
 
 #### Mixture of Experts
 
-A mixture of experts (MoE) layer consists of two sets of parallel dense feedforward layers, known as experts. One set, the shared experts, are applied to all tokens containing $N_s$ experts. For the other set, the routed experts, $k$ experts are choosen per token from the $N_r$ available experts. A routing model is used to
+A mixture of experts (MoE) layer consists of two sets of parallel dense feedforward layers, known as experts. One set, the shared experts, are applied to all tokens containing $N_s$ experts. For the other set, the routed experts, $K_r$ experts are choosen per token from the $N_r$ available experts. A routing model is used to
 create a gate which decides which experts will be activated for a given token.
 
 Several versions of MoE have been proposed, below we follow the one used in [DeepSeek V3](https://arxiv.org/abs/2412.19437) when calculating the gating function
@@ -360,7 +414,113 @@ flowchart BT
    input -- "skip" --> merge
 ```
 
-*ADD load balancing discussion*
+A problem that might arise when training an MoE layer is that the model may learn to use one or a few of the experts exclusively. A popular solution to this problem is to add an auxiliary loss which enforces load balancing amongst experts ($T$ being the sequence length)
+
+$$
+\mathcal{L}_\mathrm{balance} = \alpha \sum\limits^{N_r}_{i = 1} f_i P_i
+$$
+
+$$
+f_i = \frac{N_r}{K_r T} \sum\limits^T_{t=1} \mathbf{id}(\mbox{token } t \mbox{ selects expert } i)
+$$
+
+$$
+P_i = \frac{1}{T} \sum\limits^T_{t=1} s_{i,t}.
+$$
+
+Adding this loss may hamper model accuracy, an alternative that provides load balancing without an auxiliary loss can be found [here](https://arxiv.org/abs/2408.15664)). In this implementaton
+a bias is added when finding the top-k experts.
+
+$$
+g^{\prime}_{i,t} = \begin{cases}
+s_{i,t} & s_{i,t} + b_i\in \mathrm{TopK}(\{s_{i,t} + b_i \mid 1 \leq j \leq N_r \}) \\
+0 & \mathrm{else}
+\end{cases}
+$$
+
+At training time the biases are initialized to zero and updated by adding or subtracting a small value depending on whether the given expert is over or under loaded.
+
+##### MOE stability
+
+Mixture of experts layers are notoriously difficult to train. Much of this stems from the exponentials used (softmax or sigmoid) when calculating the router weights. Several solutions have been proposed to alleviate the problem of numerical instability
+
+1. By forcing the model to do all of the routing calculations in full precision (32-bit float) overflow and underflow issues can be reduced.
+2. The addition of an extra loss term which is designed to keep the exponentials of router logits (which are used when calculating the routing weights) low. This loss is usually referred to as the z-loss and is given by
+
+$$
+L_z = \frac{1}{C} \sum\limits_{x \in X} \left( \log{\sum\limits_{i=1}^{N_r} \exp{(\mathrm{TopK\left[x \cdot W_g\right]_i})}}\right)
+$$
+
+for a batch $X$ of $C$ tokens $x$ and router weights $W_g$
+
+4. Careful weight initialization can help maintain stability. Typically, the weights are initialized by sampling from a normal distribution with mean $\mu=0$ and standard deviation given my some scale factor. In the original switch transformer [paper](https://arxiv.org/abs/2101.03961) the authors suggest drawing weights from a truncate normal distribution with standard deviation $\sigma = \sqrt{s / d_{in}}$ where $s$ is a scale factor (the authors suggest $s=0.1$) and $d_{in}$ is the input dimension of the weight matrix being initialized.
+
+### Multi-Token Prediction
+
+A standard causal language model takes as input a sequence of tokens $t_1, \dots t_n$ and outputs the probability distribution of the token $t_{n+1}$
+given the preceeding ones. Multi-token prediction (MTP) embues the model with the ability to predict not just the next token but the next $k$ tokens.
+MTP provides several benefits. First, it can be used to speed up inference via speculative decoding. second it provides additional loss signals while training which are purported to improve results (see [here](https://arxiv.org/abs/2412.19437v2)).
+
+Below is a schematic of the MTP head architecture used in DeepSeek V3:
+
+```mermaid
+ flowchart BT
+   subgraph input_sequence[input sequence]
+      t1
+      t2
+      t3
+      dots1[...]
+      tn
+   end
+   input_sequence --> embed[Embedding layer]--> embeds1
+   subgraph embeds1[ebedded tokens]
+      e1
+      e2
+      e3
+      dots3[...]
+      en
+   end 
+   embeds1 --> llm[Transformer stack] --> hidden_state1
+   subgraph hidden_state1[final hidden states]
+      h1
+      h2
+      h3
+      dots2[...]
+      hn
+   end
+    hn --> lm_head[LM head] -- argmax --> tnp1["t(n + 1)"] --> embed2[embeddingg layer] --> enp1
+   subgraph embeds2[ebedded tokens]
+      direction LR %%
+      ee2[e2] ~~~ ee3[e3] ~~~ ee4[e4] ~~~ dots4[...] ~~~ enp1["e(n+1)"]
+   end 
+    hidden_state1 --> norm1
+    embeds2 --> norm2
+   subgraph mtp_head[MTP Head]
+      norm1[RMSNorm] --> concatenate
+      norm2[RMSNorm] --> concatenate
+      concatenate --> proj[linea layer] --> block[transformer block]
+
+   end
+   block --> lm_head2[LM head] --> out_tokens
+   subgraph out_tokens[output sequence]
+      tt3[t3]
+      tt4[t4]
+      tt5[t5]
+      dots5[...]
+      tnp2["t(n+2)"]
+   end
+style mtp_head fill: lightblue
+```
+Several MPT heads can be chained to predict additional tokens. The input to the dth MTP is the hidden states of the previous layer and the embeddings of the dth through n+d tokens from the input sequence. New tokens are determined by taking the argmax of the result of applying the
+LLM output head to the final token in the current sequence.
+
+The MTP loss is given by
+
+$$
+L_\mathrm{MTP} = \frac{\lambda}{D} \sum^D_{d=1} \mathrm{CrossEntropy} ( [P^d_{2 + k}, P^d_{3 + k}, \dots P^d_{T + k + 1}], [t_{2 + k}, t_{3 + k}, \dots t_{T + k + 1}] )
+$$
+
+where $P^d_i$ is the probability distribution for the ith token output by the dth MTP head, $t_j$ is the jth input token id, $D$ is the number of MTP heads, and $\lambda$ is a scaling constant applied to the loss.
 
 ## LLM Architectures
 
@@ -580,3 +740,146 @@ config = Llama4Config(
 model = Llama4Model(config)
 ```
 
+#### DeepSeek V3
+
+Another popular model which employs MoE feedforward layers is DeepSeek V3. The primary differences between this model and Llama 4 are the use of MLA instead of GQA, selects more than one routed expert per layer,and begins with `first_k_dense_replace` dense layers. Additionally this model adds $n_\mathrm{MTP}$ multi-token prediction heads to predict the next $1 + n_\mathrm{MTP}$
+```mermaid
+flowchart BT
+   text_input[Text input] --> Tokenizer["Tokenizer (vocab_size)"]
+   Tokenizer --> embedding["Token embedding layer (hidden_dim)"]
+   subgraph model[LLM Model]
+      embedding --- split1
+      subgraph block["Transformer Blocks (num_hidden_layers)"]
+         split1@{shape: f-circ} --> norm1[RMSNorm 1] --> attention["MLA (num_attention_heads, q_lora_rank, kv_lora_rank)"]
+         pos_emb[RoPE] --> attention --> merge1@{shape: circle, label: " + "}
+         split1 --> merge1 --- split2@{shape: f-circ} --> norm2[RMSNorm 2] --> ffn["SwiGLU (intermediate_dim) / MoE (num_experts_per_tok, num_local_experts)"] --> merge2@{shape: circle, label: " + "}
+         split2 --> merge2
+      end
+      merge2 --> norm_final[Final RMSNorm] --> output_layer["Linear output layer (vocab_size)"]
+      norm_final --> mtp["MTP heads (num_nextn_predict_layers)"] -- "extend sequence" --> output_layer
+   end
+   output_layer --> output[sequence decoder] --> Output
+   
+style model fill: lightblue
+style block fill: pink
+```
+
+```python
+from gobots.models.deepseek_v3_clone import DeepSeekV3Config, DeepSeekV3Model
+
+config = DeepSeekV3Config(
+    vocab_size=129280,
+    pad_token_id=2,
+    hidden_dim=7168,
+    intermediate_dim=18432,
+    moe_intermediate_size=2048,
+    num_experts_per_tok=8,
+    n_routed_experts=256,
+    num_attention_heads=128,
+    num_hidden_layers=61,
+    attention_bias=False,
+    attention_dropout=0.0,
+    mlp_bias=False,
+    rms_norm_eps=1e-06,
+    max_position_embeddings=163840,
+    rope_base=10000.0,
+    n_shared_experts=1,
+    first_k_dense_replace=3,
+    kv_lora_rank=512,
+    q_lora_rank=1536,
+    qk_nope_head_dim=128,
+    qk_rope_head_dim=64,
+    v_head_dim=128,
+    num_nextn_predict_layers=1,
+    initializer_range=0.02,
+    mtp_config={
+        "attention_type": "multi_head_latent_attention",
+        "d_model": 7168,
+        "num_heads": 128,
+        "v_head_dim": 128,
+        "q_lora_rank": 1536,
+        "kv_lora_rank": 512,
+        "qk_rope_head_dim": 128,
+        "qk_nope_head_dim": 64, 
+        "dropout": 0.0,
+        "attention_bias": False,
+        "feedforward_type": "moe",
+        "n_shared_experts": 1,
+        "n_routed_experts": 256,
+        "intermediate_size": 2048,
+        "num_experts_per_token": 1,
+    },  
+)
+model = DeepSeekV3Model(config)
+```
+
+## BaGL
+
+Ultimately, this repository can be used to train an LLM from scratch. The code can be used to train one of three versions of BaGL (BaGL is A Good Language model).
+
+### Training BaGL
+
+First modify `trainer.Dockerfile` to use the desired training config file. Configs for the dense, MOE, hybrid versions of the model are provided in `./configs`. Next build the training image
+
+```
+docker compose -f docker-compose.yaml build trainer
+```
+
+Next run the training proccess 
+```
+docker compose -f docker-compose.yaml up -d trainer
+```
+
+optionally the process can be monitored with [trackio](https://github.com/gradio-app/trackio) while running
+```
+docker compose -f docker-compose.yaml up -d trainer trackio
+```
+
+### Evaluation
+
+The evaluations use [lighteval](https://github.com/huggingface/lighteval) framework and can be run using the `evaluator` service
+
+```
+docker compose -f docker-compose.yaml build evaluator
+docker compose -f docker-compose.yaml up -d evaluator
+```
+
+the results of training the three versions of BaGL are summarized in the following tables:
+
+| model  | truthfulqa mc1 | truthfulqa mc2 | winogrande (5-shot) | hellaswag (10-shot) | arc    | ifeval (prompt strict) | ifeval (instruct strict) | ifeval (prompt loose) | ifeval (instruct loose) | gpqa   | mmlu pro (5-shot) | bbh (3-shot) | musr   |
+|--------|----------------|----------------|---------------------|---------------------|--------|------------------------|--------------------------|-----------------------|-------------------------|--------|-------------------|--------------|--------|
+| dense  |         0.2644 |         0.4520 |              0.4964 |              0.3174 | 0.2159 |                        |                          |                       |                         |        |                   |              |        |
+| moe    |         0.2521 |         0.4437 |              0.4957 |              0.2475 | 0.2218 |                 0.1109 |                   0.1966 |                0.1331 |                  0.2530 | 0.2545 |            0.099  |       0.3075 | 0.4041 |
+| hybrid |         0.2656 |         0.4575 |              0.5122 |              0.2536 | 0.2039 |                 0.1146 |                   0.2266 |                0.1201 |                  0.2314 | 0.2500 |            0.1139 |       0.3087 | 0.3923 |
+
+
+task-wise break down of bbh results:
+
+|                             bbh subtask | moe    | hybrid |
+|-----------------------------------------|--------|--------|
+| causal_judgment                         | 0.5158 | 0.5158 |
+| date_understanding                      | 0.0000 | 0.0000 |
+| disambiguation_qa                       | 0.3101 | 0.3140 |
+| geometric_shapes                        | 0.0917 | 0.1000 |
+| logical_deduction_five_objects          | 0.1980 | 0.2040 |
+| logical_deduction_seven_objects         | 0.1400 | 0.1429 |
+| logical_deduction_three_objects         | 0.3367 | 0.3333 |
+| movie_recommendation                    | 0.2440 | 0.2600 |
+| navigate                                | 0.5000 | 0.4970 |
+| reasoning_about_colored_objects         | 0.0795 | 0.0810 |
+| ruin_names                              | 0.2478 | 0.2790 |
+| salient_translation_error_detection     | 0.2475 | 0.1784 |
+| snarks                                  | 0.4530 | 0.4641 |
+| sports_understanding                    | 0.5010 | 0.5110 |
+| temporal_sequences                      | 1.0000 | 1.0000 |
+| tracking_shuffled_objects_five_objects  | 0.2000 | 0.2008 |
+| tracking_shuffled_objects_seven_objects | 0.1337 | 0.1429 |
+| tracking_shuffled_objects_three_objects | 0.3367 | 0.3333 |
+
+task-wise break down of musr results:
+
+| musr sub task     | moe    | hybrid |
+|-------------------|--------|--------|
+| murder_mysteries  | 0.5000 | 0.4840 |
+| object_placements | 0.3242 | 0.2969 |
+| team_allocation   | 0.3880 | 0.3960 |

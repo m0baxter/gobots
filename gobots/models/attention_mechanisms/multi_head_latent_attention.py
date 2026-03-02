@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.nn.attention.flex_attention import flex_attention
 
 
 # add qk-norm option
@@ -55,12 +55,13 @@ class MultiHeadLatentAttention(nn.Module):
             self.num_heads * self.v_head_dim, d_model, bias=attention_bias
         )
 
+    @torch.compile(mode="max-autotune")
     def forward(
         self,
         x: torch.Tensor,
         attn_mask=None,
         pos_embedding=None,
-        is_causal=False,
+        input_pos=None,
     ):
         batch, seq_len, d_model = x.shape
 
@@ -86,22 +87,23 @@ class MultiHeadLatentAttention(nn.Module):
         )
 
         if pos_embedding:
-            q_pe = pos_embedding(q_pe.transpose(1, 2)).transpose(1, 2)
-            k_pe = pos_embedding(k_pe.transpose(1, 2)).transpose(1, 2)
+            q_pe = pos_embedding(q_pe.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
+            k_pe = pos_embedding(k_pe.transpose(1, 2), input_pos=input_pos).transpose(
+                1, 2
+            )
 
         query_states = torch.cat([q_nope, q_pe], dim=-1)
         key_states = torch.cat(
             [k_nope, k_pe.repeat_interleave(self.num_heads, dim=1)], dim=-1
         )
 
-        attn_output = F.scaled_dot_product_attention(
+        attn_output = flex_attention(
             query_states,
             key_states,
             value_states,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout,
-            is_causal=is_causal,
-            enable_gqa=False,
+            block_mask=attn_mask,
         )
         attn_output = attn_output.transpose(1, 2).flatten(-2)
 

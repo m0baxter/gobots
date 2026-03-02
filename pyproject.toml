@@ -1,17 +1,27 @@
 [project]
 name = "gobots"
-version = "0.1.0"
+version = "0.5.0"
 description = "The GoBots to Hugging Face's Transformers. A repository for exploring and understanding transformer architectures"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = "==3.13.*"
 dependencies = [
-    "torch>=2.7.1",
-    "torchao>=0.12.0",
-    "torchtune>=0.6.1",
-    "transformers>=4.54.0",
+    "accelerate>=1.12.0",
+    "boto3>=1.40.61",
+    "datasets>=4.5.0",
+    "emoji>=2.15.0",
+    "huggingface-hub>=0.36.0",
+    "lighteval[multilingual,extended_tasks,math]>=0.13.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
+    "smart-open>=7.5.0",
+    "torch==2.9.1",
+    "trackio>=0.15.0",
+    "transformers==4.57.1",
+    "triton>=3.5.1",
+    "zstandard>=0.25.0",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.12.5",
+    "ruff>=0.14.14",
 ]
