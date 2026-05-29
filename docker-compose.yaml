@@ -1,7 +1,7 @@
 x-common: &common-config
   shm_size: 200gb
   environment:
-    HF_TOKEN: "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"
+    HF_TOKEN: "FILL IN"
     TRITON_CACHE_DIR: "/cache/triton_cache"
     HF_HOME: "/cache/huggingface"
     GIT_PYTHON_REFRESH: "quiet"
